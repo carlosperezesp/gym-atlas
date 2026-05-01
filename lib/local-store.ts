@@ -8,6 +8,8 @@ import {
   IMPORTED_SETS,
   IMPORTED_WORKOUTS,
 } from "@/lib/imported-workouts";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { createClient } from "@/lib/supabase/client";
 
 export type LocalExercise = {
   id: string;
@@ -58,9 +60,11 @@ export type LocalData = {
   sets: LocalSet[];
   settings: LocalSettings;
   importVersion?: number;
+  updatedAt?: string;
 };
 
 const STORAGE_KEY = "gymos.local.v1";
+const CLOUD_STATE_ID = process.env.NEXT_PUBLIC_GYM_ATLAS_STATE_ID || "default";
 
 const DEFAULT_SETTINGS: LocalSettings = {
   bodyweight_kg: 75,
@@ -158,6 +162,7 @@ export function defaultData(): LocalData {
     sets: IMPORTED_SETS,
     settings: DEFAULT_SETTINGS,
     importVersion: IMPORT_VERSION,
+    updatedAt: "2026-05-01T00:00:00.000Z",
   };
 }
 
@@ -167,7 +172,7 @@ export function loadData(): LocalData {
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     const data = defaultData();
-    saveData(data);
+    saveLocalData(data);
     return data;
   }
 
@@ -180,6 +185,7 @@ export function loadData(): LocalData {
       sets: parsed.sets ?? [],
       settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
       importVersion: parsed.importVersion,
+      updatedAt: parsed.updatedAt,
     };
 
     if (data.importVersion !== IMPORT_VERSION) {
@@ -195,7 +201,88 @@ export function loadData(): LocalData {
 }
 
 export function saveData(data: LocalData) {
+  const next = {
+    ...data,
+    updatedAt: new Date().toISOString(),
+  };
+  saveLocalData(next);
+  void saveCloudData(next);
+}
+
+export function saveLocalData(data: LocalData) {
+  if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+export function isCloudSyncEnabled() {
+  return isSupabaseConfigured();
+}
+
+export async function syncCloudData(): Promise<{ changed: boolean; data: LocalData; mode: "local" | "cloud" }> {
+  if (typeof window === "undefined" || !isCloudSyncEnabled()) {
+    return { changed: false, data: loadData(), mode: "local" };
+  }
+
+  const localRaw = window.localStorage.getItem(STORAGE_KEY);
+  const localData = localRaw ? loadData() : defaultData();
+  const client = createClient();
+  const { data: row, error } = await client
+    .from("app_state")
+    .select("data, updated_at")
+    .eq("id", CLOUD_STATE_ID)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("GymATLAS cloud sync failed", error);
+    return { changed: false, data: localData, mode: "local" };
+  }
+
+  if (!row?.data) {
+    const seed = {
+      ...localData,
+      updatedAt: localData.updatedAt ?? new Date().toISOString(),
+    };
+    saveLocalData(seed);
+    await saveCloudData(seed);
+    return { changed: false, data: seed, mode: "cloud" };
+  }
+
+  const cloudData = normalizeData({
+    ...(row.data as Partial<LocalData>),
+    updatedAt: (row.data as Partial<LocalData>).updatedAt ?? row.updated_at,
+  });
+
+  const cloudUpdatedAt = Date.parse(cloudData.updatedAt ?? "");
+  const localUpdatedAt = localRaw ? Date.parse(localData.updatedAt ?? "") : 0;
+
+  if (!localRaw || cloudUpdatedAt >= localUpdatedAt) {
+    const changed = JSON.stringify(localData) !== JSON.stringify(cloudData);
+    saveLocalData(cloudData);
+    return { changed, data: cloudData, mode: "cloud" };
+  }
+
+  await saveCloudData(localData);
+  return { changed: false, data: localData, mode: "cloud" };
+}
+
+async function saveCloudData(data: LocalData) {
+  if (!isCloudSyncEnabled()) return;
+
+  try {
+    const client = createClient();
+    const updatedAt = data.updatedAt ?? new Date().toISOString();
+    const { error } = await client
+      .from("app_state")
+      .upsert({
+        id: CLOUD_STATE_ID,
+        data: { ...normalizeData(data), updatedAt },
+        updated_at: updatedAt,
+      });
+
+    if (error) console.warn("GymATLAS cloud save failed", error);
+  } catch (error) {
+    console.warn("GymATLAS cloud save failed", error);
+  }
 }
 
 export function makeId(prefix: string) {
@@ -221,4 +308,22 @@ function withImportedWorkouts(data: LocalData): LocalData {
     sets: mergeById(data.sets, IMPORTED_SETS),
     importVersion: IMPORT_VERSION,
   };
+}
+
+function normalizeData(data: Partial<LocalData>): LocalData {
+  const normalized = {
+    exercises: data.exercises?.length ? data.exercises : DEFAULT_EXERCISES,
+    exerciseMuscles: data.exerciseMuscles?.length ? data.exerciseMuscles : DEFAULT_MUSCLES,
+    workouts: data.workouts ?? [],
+    sets: data.sets ?? [],
+    settings: { ...DEFAULT_SETTINGS, ...data.settings },
+    importVersion: data.importVersion,
+    updatedAt: data.updatedAt,
+  };
+
+  if (normalized.importVersion !== IMPORT_VERSION) {
+    return withImportedWorkouts(normalized);
+  }
+
+  return normalized;
 }

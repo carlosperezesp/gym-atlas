@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { defaultData, loadData, resetLocalData, saveData } from "@/lib/local-store";
+import { defaultData, isCloudSyncEnabled, loadData, resetLocalData, saveData } from "@/lib/local-store";
 import { useRouter } from "next/navigation";
 
 export default function SettingsPage() {
@@ -198,9 +198,11 @@ export default function SettingsPage() {
       </button>
 
       <div className="card p-4">
-        <p className="section-label">Local Data</p>
+        <p className="section-label">{isCloudSyncEnabled() ? "Synced Data" : "Local Data"}</p>
         <p className="text-xs text-zinc-600 mb-3">
-          Data is stored only in this browser.
+          {isCloudSyncEnabled()
+            ? "Data syncs through your shared cloud database."
+            : "Data is stored only in this browser."}
         </p>
         <button onClick={handleReset} className="btn btn-danger w-full">
           Reset local data
