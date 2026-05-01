@@ -27,6 +27,7 @@ export default function LogPage() {
   const [blocks, setBlocks] = useState<ExerciseBlock[]>([emptyBlock()]);
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [loading, setLoading] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [expandedRpe, setExpandedRpe] = useState<Record<string, boolean>>({});
 
@@ -88,35 +89,40 @@ export default function LogPage() {
     }
 
     setLoading(true);
-    const data = loadData();
-    const workout = {
-      id: makeId("workout"),
-      date,
-      notes: notes || null,
-      created_at: new Date().toISOString(),
-    };
-
-    const setsToInsert = blocks.flatMap((block) =>
-      block.sets.map((s) => ({
-        id: makeId("set"),
-        workout_id: workout.id,
-        exercise_id: block.exercise_id,
-        weight_kg: s.weight_kg ? parseFloat(s.weight_kg) : null,
-        reps: parseInt(s.reps),
-        rpe: s.rpe ? parseFloat(s.rpe) : null,
-        notes: s.notes || null,
+    try {
+      const data = loadData();
+      const workout = {
+        id: makeId("workout"),
+        date,
+        notes: notes || null,
         created_at: new Date().toISOString(),
-      }))
-    );
+      };
 
-    saveData({
-      ...data,
-      workouts: [...data.workouts, workout],
-      sets: [...data.sets, ...setsToInsert],
-    });
+      const setsToInsert = blocks.flatMap((block) =>
+        block.sets.map((s) => ({
+          id: makeId("set"),
+          workout_id: workout.id,
+          exercise_id: block.exercise_id,
+          weight_kg: s.weight_kg ? parseFloat(s.weight_kg) : null,
+          reps: parseInt(s.reps),
+          rpe: s.rpe ? parseFloat(s.rpe) : null,
+          notes: s.notes || null,
+          created_at: new Date().toISOString(),
+        }))
+      );
 
-    router.push("/");
-    router.refresh();
+      saveData({
+        ...data,
+        workouts: [...data.workouts, workout],
+        sets: [...data.sets, ...setsToInsert],
+      });
+
+      setSaved(true);
+      setTimeout(() => router.push("/"), 800);
+    } catch {
+      setError("Failed to save workout. Your browser storage may be full or restricted.");
+      setLoading(false);
+    }
   }
 
   // Group exercises by category
@@ -132,11 +138,16 @@ export default function LogPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="font-condensed font-800 text-2xl tracking-wide">Log Workout</h1>
-        <button onClick={handleSave} disabled={loading} className="btn btn-primary">
-          {loading ? "Saving…" : "Save"}
+        <button onClick={handleSave} disabled={loading || saved} className="btn btn-primary">
+          {saved ? "Saved!" : loading ? "Saving…" : "Save"}
         </button>
       </div>
 
+      {saved && (
+        <div className="card-sm p-3 border-green-500/20 bg-green-500/8 text-green-400 text-sm font-600">
+          Workout saved!
+        </div>
+      )}
       {error && (
         <div className="card-sm p-3 border-red-500/20 bg-red-500/8 text-red-400 text-sm">
           {error}
@@ -308,7 +319,7 @@ export default function LogPage() {
         disabled={loading}
         className="btn btn-primary w-full py-3 text-base"
       >
-        {loading ? "Saving workout…" : "Save workout"}
+        {saved ? "Saved!" : loading ? "Saving workout…" : "Save workout"}
       </button>
     </div>
   );

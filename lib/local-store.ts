@@ -211,7 +211,12 @@ export function saveData(data: LocalData) {
 
 export function saveLocalData(data: LocalData) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.error("GymATLAS local save failed (storage full or restricted?)", e);
+    throw e;
+  }
 }
 
 export function isCloudSyncEnabled() {
@@ -255,7 +260,7 @@ export async function syncCloudData(): Promise<{ changed: boolean; data: LocalDa
   const cloudUpdatedAt = Date.parse(cloudData.updatedAt ?? "");
   const localUpdatedAt = localRaw ? Date.parse(localData.updatedAt ?? "") : 0;
 
-  if (!localRaw || cloudUpdatedAt >= localUpdatedAt) {
+  if (!localRaw || cloudUpdatedAt > localUpdatedAt) {
     const changed = JSON.stringify(localData) !== JSON.stringify(cloudData);
     saveLocalData(cloudData);
     return { changed, data: cloudData, mode: "cloud" };
