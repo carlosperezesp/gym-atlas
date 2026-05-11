@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { loadData, makeId, saveData, type LocalExercise } from "@/lib/local-store";
+import { loadData, makeId, saveData, type LocalExercise, type LocalSet } from "@/lib/local-store";
 import { useRouter } from "next/navigation";
 
 type SetEntry = {
@@ -30,6 +30,16 @@ export default function LogPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [expandedRpe, setExpandedRpe] = useState<Record<string, boolean>>({});
+  const [exportStartDate, setExportStartDate] = useState(() => {
+    const today = new Date();
+    const prev = new Date(today);
+    prev.setDate(today.getDate() - 30);
+    return prev.toISOString().split("T")[0];
+  });
+  const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split("T")[0]);
+  const [exportText, setExportText] = useState("");
+  const [exportStatus, setExportStatus] = useState<"idle" | "ready" | "copied">("idle");
+  const [exportError, setExportError] = useState("");
 
   const loadExercises = useCallback(async () => {
     setExercises([...loadData().exercises].sort((a, b) => a.name.localeCompare(b.name)));
@@ -125,6 +135,100 @@ export default function LogPage() {
     }
   }
 
+  function formatDateLabel(value: string) {
+    return new Date(value).toLocaleDateString("en", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  }
+
+  function generateExportText() {
+    setExportError("");
+
+    if (!exportStartDate || !exportEndDate) {
+      setExportError("Please choose both a start and end date.");
+      return;
+    }
+
+    if (exportEndDate < exportStartDate) {
+      setExportError("End date must be on or after the start date.");
+      return;
+    }
+
+    const data = loadData();
+    const workoutsInRange = data.workouts
+      .filter((w) => w.date >= exportStartDate && w.date <= exportEndDate)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    const exerciseMap = Object.fromEntries(data.exercises.map((ex) => [ex.id, ex.name]));
+    const setsByWorkout = data.sets.reduce<Record<string, LocalSet[]>>((acc, set) => {
+      if (!acc[set.workout_id]) acc[set.workout_id] = [];
+      acc[set.workout_id].push(set);
+      return acc;
+    }, {});
+
+    const lines: string[] = [
+      `Gym workout export`,
+      `Date range: ${formatDateLabel(exportStartDate)} — ${formatDateLabel(exportEndDate)}`,
+      `Workouts: ${workoutsInRange.length}`,
+      "",
+    ];
+
+    if (!workoutsInRange.length) {
+      lines.push(`No workouts found between ${formatDateLabel(exportStartDate)} and ${formatDateLabel(exportEndDate)}.`);
+    } else {
+      for (const workout of workoutsInRange) {
+        lines.push(`=== ${formatDateLabel(workout.date)} ===`);
+        if (workout.notes) lines.push(`Notes: ${workout.notes}`);
+
+        const workoutSets = setsByWorkout[workout.id] ?? [];
+        const groupedByExercise = workoutSets.reduce<Record<string, LocalSet[]>>((acc, set) => {
+          const name = exerciseMap[set.exercise_id] ?? "Unknown exercise";
+          if (!acc[name]) acc[name] = [];
+          acc[name].push(set);
+          return acc;
+        }, {});
+
+        for (const [exerciseName, sets] of Object.entries(groupedByExercise)) {
+          lines.push(`- ${exerciseName}`);
+          for (const set of sets) {
+            const weight = set.weight_kg === null ? "bodyweight" : `${set.weight_kg} kg`;
+            const rpe = set.rpe !== null ? `, RPE ${set.rpe}` : "";
+            const notes = set.notes ? `, notes: ${set.notes}` : "";
+            lines.push(`  • ${weight} x ${set.reps}${rpe}${notes}`);
+          }
+        }
+
+        lines.push("");
+      }
+    }
+
+    setExportText(lines.join("\n"));
+    setExportStatus("ready");
+  }
+
+  async function handleCopyExport() {
+    if (!exportText) {
+      setExportError("Generate the export first before copying.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(exportText);
+      setExportStatus("copied");
+    } catch {
+      setExportError("Could not copy to clipboard. Try selecting the text manually.");
+    }
+  }
+
+  function handlePrintExport() {
+    if (!exportText) {
+      generateExportText();
+    }
+    setTimeout(() => window.print(), 100);
+  }
+
   // Group exercises by category
   const byCategory: Record<string, LocalExercise[]> = {};
   for (const ex of exercises) {
@@ -174,6 +278,78 @@ export default function LogPage() {
             placeholder="e.g. felt strong today"
           />
         </div>
+      </div>
+
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 flex-1">
+            <div>
+              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">Start date</label>
+              <input
+                className="input"
+                type="date"
+                value={exportStartDate}
+                onChange={(e) => setExportStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">End date</label>
+              <input
+                className="input"
+                type="date"
+                value={exportEndDate}
+                onChange={(e) => setExportEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button onClick={generateExportText} className="btn btn-secondary">
+              Generate export
+            </button>
+            <button onClick={handleCopyExport} className="btn btn-ghost">
+              Copy text
+            </button>
+            <button onClick={handlePrintExport} className="btn btn-ghost">
+              Print / PDF
+            </button>
+          </div>
+        </div>
+
+        {exportError && (
+          <div className="card-sm p-3 border-red-500/20 bg-red-500/8 text-red-400 text-sm">
+            {exportError}
+          </div>
+        )}
+
+        {exportText && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-zinc-300">Export text ready{exportStatus === "copied" ? " — copied!" : ""}.</p>
+              <p className="text-xs text-zinc-500">Use copy or print to export.</p>
+            </div>
+            <textarea
+              className="input h-48 font-mono text-sm resize-none"
+              readOnly
+              value={exportText}
+            />
+          </div>
+        )}
+
+        <div id="export-print-area" className="hidden p-4 bg-white text-black" aria-hidden="true">
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold">Workout export</h2>
+            <pre className="whitespace-pre-wrap text-sm font-mono">{exportText}</pre>
+          </div>
+        </div>
+        <style>{`
+          #export-print-area { display: none !important; }
+          @media print {
+            body * { visibility: hidden !important; }
+            #export-print-area { display: block !important; visibility: visible !important; position: absolute; top: 0; left: 0; width: 100%; }
+            #export-print-area * { visibility: visible !important; }
+          }
+        `}</style>
       </div>
 
       {/* Exercise blocks */}
