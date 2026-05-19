@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadData, type LocalData } from "@/lib/local-store";
+import { loadData, type LocalData, type LocalExercise } from "@/lib/local-store";
 import {
   calculateE1RM,
   getEffectiveWeight,
@@ -12,17 +12,40 @@ import {
   getExerciseTrend,
   getProgressionSuggestion,
   getAgeUrgency,
+  getDaysSinceDate,
   formatKg,
   formatDaysAgo,
 } from "@/lib/calculations";
 import type { SetWithE1RM, WorkoutTopSet } from "@/lib/calculations";
 import type { MuscleGroup } from "@/types";
-import { ALL_MUSCLES } from "@/types";
+import { ALL_MUSCLES, MUSCLE_LABELS } from "@/types";
 import MuscleCard from "@/components/dashboard/MuscleCard";
 import TrendBadge from "@/components/ui/TrendBadge";
 
+type WorkoutMode = "Full Body" | "Pierna" | "Pull" | "Push";
+
+type ExerciseRecommendation = {
+  exercise: LocalExercise;
+  muscles: MuscleGroup[];
+  primaryMuscle: MuscleGroup | null;
+  daysSinceExercise: number | null;
+  pbDaysSince: number | null;
+  trend: "up" | "down" | "flat" | "none";
+  score: number;
+  reason: string;
+};
+
+type WorkoutRecommendation = {
+  mode: WorkoutMode;
+  muscles: ReturnType<typeof getMuscleFreshness>[];
+  exercises: ExerciseRecommendation[];
+  score: number;
+  badgeClass: string;
+};
+
 export default function DashboardPage() {
   const [data, setData] = useState<LocalData | null>(null);
+  const [selectedWorkoutMode, setSelectedWorkoutMode] = useState<WorkoutMode | null>(null);
 
   useEffect(() => {
     setData(loadData());
@@ -61,10 +84,16 @@ export default function DashboardPage() {
     exerciseSetMap[exercise.id].push({ e1rm, date: workout.date });
   }
 
-  const muscleMap: Record<string, string[]> = {};
+  const muscleMap: Record<string, MuscleGroup[]> = {};
+  const muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>> = {};
   for (const em of data.exerciseMuscles) {
     if (!muscleMap[em.exercise_id]) muscleMap[em.exercise_id] = [];
+    if (!muscleContributionMap[em.exercise_id]) muscleContributionMap[em.exercise_id] = [];
     muscleMap[em.exercise_id].push(em.muscle);
+    muscleContributionMap[em.exercise_id].push({
+      muscle: em.muscle,
+      contribution: em.contribution,
+    });
   }
 
   const muscleLastTrained: Record<string, string> = {};
@@ -83,7 +112,18 @@ export default function DashboardPage() {
     getMuscleFreshness(m, muscleLastTrained[m] ?? null, thresholds)
   );
 
-  const nextSession = getNextSessionRecommendation(muscleFreshness);
+  const workoutRecommendations = getWorkoutRecommendations({
+    data,
+    exerciseSetMap,
+    muscleContributionMap,
+    muscleFreshness,
+    windowDays,
+    topN,
+  });
+  const autoWorkout = workoutRecommendations[0] ?? null;
+  const activeWorkout =
+    workoutRecommendations.find((item) => item.mode === (selectedWorkoutMode ?? autoWorkout?.mode)) ??
+    autoWorkout;
 
   const exercisesWithSets = data.exercises.filter((e) => (exerciseSetMap[e.id] ?? []).length > 0);
   const exerciseLevels = exercisesWithSets.map((exercise) => {
@@ -107,13 +147,15 @@ export default function DashboardPage() {
       byDate[date].push({ weight: set.weight_kg ?? 0, reps: set.reps, date });
     }
 
-    const topSets = Object.values(byDate).map((daySets) =>
-      daySets.reduce((best, cur) => {
-        const bEff = getEffectiveWeight(best.weight, exercise.is_bodyweight, bw);
-        const cEff = getEffectiveWeight(cur.weight, exercise.is_bodyweight, bw);
-        return calculateE1RM(cEff, cur.reps) > calculateE1RM(bEff, cur.reps) ? cur : best;
-      })
-    );
+    const topSets = Object.values(byDate)
+      .map((daySets) =>
+        daySets.reduce((best, cur) => {
+          const bEff = getEffectiveWeight(best.weight, exercise.is_bodyweight, bw);
+          const cEff = getEffectiveWeight(cur.weight, exercise.is_bodyweight, bw);
+          return calculateE1RM(cEff, cur.reps) > calculateE1RM(bEff, best.reps) ? cur : best;
+        })
+      )
+      .sort((a, b) => a.date.localeCompare(b.date));
 
     const suggestion = getProgressionSuggestion(topSets);
     if (suggestion?.suggest) {
@@ -152,25 +194,74 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {nextSession && (
+      {activeWorkout && (
         <section>
-          <p className="section-label">Next Gym Session</p>
+          <p className="section-label">Recommended Workout</p>
           <div className="card p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Recommended</p>
-                <h2 className="text-2xl font-semibold text-zinc-200 mt-0.5">{nextSession.label}</h2>
+                <h2 className="text-2xl font-semibold text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
               </div>
-              <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${nextSession.badgeClass}`}>
-                {Math.round(nextSession.score)}d avg
+              <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${activeWorkout.badgeClass}`}>
+                {Math.round(activeWorkout.score)}d avg
               </span>
             </div>
+
+            <div className="grid grid-cols-4 gap-1.5">
+              {WORKOUT_MODES.map((mode) => {
+                const isActive = activeWorkout.mode === mode;
+                const isAuto = autoWorkout?.mode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setSelectedWorkoutMode(mode)}
+                    className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-colors ${
+                      isActive
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-zinc-800/50 bg-zinc-800/30 text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+                    }`}
+                  >
+                    <span className="block truncate">{mode}</span>
+                    {isAuto && <span className="block text-[10px] opacity-70">auto</span>}
+                  </button>
+                );
+              })}
+            </div>
+
             <p className="text-sm text-zinc-500">
-              Esta sesión encaja mejor porque estos músculos llevan más tiempo sin recibir estímulo.
+              Esta sesión prioriza músculos con más tiempo sin estímulo y ejercicios con marcas más tiempo estancadas, manteniendo una selección equilibrada.
             </p>
             <div className="grid grid-cols-1 gap-2">
-              {nextSession.muscles.map((mf) => (
+              {activeWorkout.muscles.map((mf) => (
                 <MuscleCard key={mf.muscle} freshness={mf} compact href={`/exercises?muscle=${mf.muscle}`} />
+              ))}
+            </div>
+
+            <div className="space-y-2 pt-1">
+              {activeWorkout.exercises.map((item, index) => (
+                <Link
+                  key={item.exercise.id}
+                  href={`/exercises/${item.exercise.id}`}
+                  className="card-sm flex items-start justify-between gap-3 p-3 transition-colors hover:bg-zinc-800/50"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-white text-xs font-semibold text-zinc-500 border border-zinc-800/50">
+                        {index + 1}
+                      </span>
+                      <p className="font-semibold text-zinc-200 truncate">{item.exercise.name}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-zinc-500">{item.reason}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <AgeChip days={item.pbDaysSince} label="PB" />
+                    <span className="text-[10px] text-zinc-600">
+                      {item.primaryMuscle ? MUSCLE_LABELS[item.primaryMuscle] : item.exercise.category ?? "Other"}
+                    </span>
+                  </div>
+                </Link>
               ))}
             </div>
           </div>
@@ -221,50 +312,186 @@ export default function DashboardPage() {
   );
 }
 
-function getNextSessionRecommendation(muscles: ReturnType<typeof getMuscleFreshness>[]) {
-  const groups = [
-    {
-      label: "Pull",
-      muscles: ["upper_back", "lats", "shoulders_rear", "biceps"] as MuscleGroup[],
-    },
-    {
-      label: "Push",
-      muscles: ["chest", "shoulders_front", "shoulders_side", "triceps"] as MuscleGroup[],
-    },
-    {
-      label: "Pierna",
-      muscles: ["glutes", "quads", "hamstrings", "calves", "lower_back"] as MuscleGroup[],
-    },
-  ];
+const WORKOUT_MODES: WorkoutMode[] = ["Full Body", "Pierna", "Pull", "Push"];
 
-  const byMuscle = Object.fromEntries(muscles.map((m) => [m.muscle, m]));
-  const ranked = groups.map((group) => {
-    const groupMuscles = group.muscles
+const WORKOUT_TARGETS: Record<WorkoutMode, MuscleGroup[]> = {
+  "Full Body": ALL_MUSCLES,
+  Pierna: ["glutes", "quads", "hamstrings", "calves", "lower_back"],
+  Pull: ["upper_back", "lats", "shoulders_rear", "biceps"],
+  Push: ["chest", "shoulders_front", "shoulders_side", "triceps"],
+};
+
+const FULL_BODY_BUCKETS: MuscleGroup[][] = [
+  ["quads", "glutes", "hamstrings", "calves", "lower_back"],
+  ["chest", "shoulders_front", "shoulders_side", "triceps"],
+  ["upper_back", "lats", "shoulders_rear", "biceps"],
+];
+
+function getWorkoutRecommendations({
+  data,
+  exerciseSetMap,
+  muscleContributionMap,
+  muscleFreshness,
+  windowDays,
+  topN,
+}: {
+  data: LocalData;
+  exerciseSetMap: Record<string, SetWithE1RM[]>;
+  muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>;
+  muscleFreshness: ReturnType<typeof getMuscleFreshness>[];
+  windowDays: number;
+  topN: number;
+}): WorkoutRecommendation[] {
+  const byMuscle = Object.fromEntries(muscleFreshness.map((m) => [m.muscle, m]));
+  const exerciseLastTrained = Object.fromEntries(
+    Object.entries(exerciseSetMap).map(([exerciseId, sets]) => [
+      exerciseId,
+      sets.length ? [...sets].sort((a, b) => b.date.localeCompare(a.date))[0].date : null,
+    ])
+  );
+
+  const byMode = WORKOUT_MODES.map((mode) => {
+    const targetMuscles = WORKOUT_TARGETS[mode];
+    const modeMuscles = targetMuscles
       .map((muscle) => byMuscle[muscle])
       .filter(Boolean)
       .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999));
-    const staleMuscles = groupMuscles.slice(0, 3);
+    const staleMuscles = modeMuscles.slice(0, mode === "Full Body" ? 5 : 3);
     const score =
       staleMuscles.reduce((sum, muscle) => sum + (muscle.daysSince ?? 120), 0) /
       Math.max(staleMuscles.length, 1);
-    return { ...group, muscles: staleMuscles, score };
-  }).sort((a, b) => b.score - a.score);
 
-  const winner = ranked[0];
-  if (!winner) return null;
+    const exercises = data.exercises
+      .map((exercise) =>
+        scoreExerciseForWorkout({
+          exercise,
+          muscles: muscleContributionMap[exercise.id] ?? [],
+          exerciseSets: exerciseSetMap[exercise.id] ?? [],
+          lastTrained: exerciseLastTrained[exercise.id] ?? null,
+          targetMuscles,
+          byMuscle,
+          windowDays,
+          topN,
+        })
+      )
+      .filter((item): item is ExerciseRecommendation => Boolean(item))
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      mode,
+      muscles: staleMuscles,
+      exercises: selectBalancedExercises(mode, exercises),
+      score,
+      badgeClass:
+        score > 60
+          ? "bg-red-50 text-red-700 border-red-200"
+          : score > 30
+            ? "bg-orange-50 text-orange-700 border-orange-200"
+            : "bg-yellow-50 text-yellow-700 border-yellow-200",
+    };
+  });
+
+  return byMode.sort((a, b) => b.score - a.score);
+}
+
+function scoreExerciseForWorkout({
+  exercise,
+  muscles,
+  exerciseSets,
+  lastTrained,
+  targetMuscles,
+  byMuscle,
+  windowDays,
+  topN,
+}: {
+  exercise: LocalExercise;
+  muscles: Array<{ muscle: MuscleGroup; contribution: number }>;
+  exerciseSets: SetWithE1RM[];
+  lastTrained: string | null;
+  targetMuscles: MuscleGroup[];
+  byMuscle: Record<string, ReturnType<typeof getMuscleFreshness>>;
+  windowDays: number;
+  topN: number;
+}): ExerciseRecommendation | null {
+  const targetEntries = muscles.filter((entry) => targetMuscles.includes(entry.muscle));
+  if (targetEntries.length === 0) return null;
+
+  const pb = getPBInfo(exerciseSets);
+  const trend = getExerciseTrend(exerciseSets, windowDays, topN);
+  const daysSinceExercise = getDaysSinceDate(lastTrained);
+  const primaryMuscle =
+    [...targetEntries].sort((a, b) => b.contribution - a.contribution)[0]?.muscle ?? null;
+  const muscleScore = targetEntries.reduce((sum, entry) => {
+    const days = byMuscle[entry.muscle]?.daysSince ?? 120;
+    return sum + days * entry.contribution;
+  }, 0);
+  const pbScore = Math.min(pb?.daysSince ?? 45, 180) * 0.35;
+  const exerciseRestScore = Math.min(daysSinceExercise ?? 45, 90) * 0.15;
+  const trendBonus = trend === "flat" ? 12 : trend === "down" ? 8 : 0;
+  const score = muscleScore + pbScore + exerciseRestScore + trendBonus;
 
   return {
-    ...winner,
-    badgeClass:
-      winner.score > 60
-        ? "bg-red-50 text-red-700 border-red-200"
-        : winner.score > 30
-          ? "bg-orange-50 text-orange-700 border-orange-200"
-          : "bg-yellow-50 text-yellow-700 border-yellow-200",
+    exercise,
+    muscles: targetEntries.map((entry) => entry.muscle),
+    primaryMuscle,
+    daysSinceExercise,
+    pbDaysSince: pb?.daysSince ?? null,
+    trend,
+    score,
+    reason: getExerciseReason(primaryMuscle, byMuscle[primaryMuscle ?? ""]?.daysSince ?? null, pb?.daysSince ?? null, trend),
   };
 }
 
-function AgeChip({ days }: { days: number | null }) {
+function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[]) {
+  const limit = mode === "Full Body" ? 6 : 5;
+  const selected: ExerciseRecommendation[] = [];
+
+  if (mode === "Full Body") {
+    for (const bucket of FULL_BODY_BUCKETS) {
+      const picks = ranked.filter((item) => item.muscles.some((muscle) => bucket.includes(muscle)));
+      for (const pick of picks) {
+        if (!selected.some((item) => item.exercise.id === pick.exercise.id)) {
+          selected.push(pick);
+          break;
+        }
+      }
+    }
+  } else {
+    for (const muscle of WORKOUT_TARGETS[mode]) {
+      const pick = ranked.find(
+        (item) =>
+          item.muscles.includes(muscle) &&
+          !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
+      );
+      if (pick) selected.push(pick);
+    }
+  }
+
+  for (const item of ranked) {
+    if (selected.length >= limit) break;
+    if (!selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)) {
+      selected.push(item);
+    }
+  }
+
+  return selected.slice(0, 7);
+}
+
+function getExerciseReason(
+  muscle: MuscleGroup | null,
+  muscleDays: number | null,
+  pbDays: number | null,
+  trend: "up" | "down" | "flat" | "none"
+) {
+  const muscleText = muscle
+    ? `${MUSCLE_LABELS[muscle]} ${formatDaysAgo(muscleDays).toLowerCase()}`
+    : "Buen encaje para la sesión";
+  const pbText = pbDays === null ? "sin PB registrado" : `PB ${formatDaysAgo(pbDays).toLowerCase()}`;
+  const trendText = trend === "flat" ? "marca plana" : trend === "down" ? "conviene reactivar" : "buen momento";
+  return `${muscleText} · ${pbText} · ${trendText}`;
+}
+
+function AgeChip({ days, label }: { days: number | null; label?: string }) {
   const urgency = getAgeUrgency(days);
   const styles = {
     green: "bg-green-50 text-green-700 border-green-200",
@@ -276,7 +503,7 @@ function AgeChip({ days }: { days: number | null }) {
 
   return (
     <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${styles}`}>
-      {formatDaysAgo(days)}
+      {label ? `${label} ` : ""}{formatDaysAgo(days)}
     </span>
   );
 }
