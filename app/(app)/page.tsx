@@ -23,6 +23,7 @@ import MuscleCard from "@/components/dashboard/MuscleCard";
 import TrendBadge from "@/components/ui/TrendBadge";
 
 type WorkoutMode = "Full Body" | "Pierna" | "Pull" | "Push";
+type ExerciseGoal = "PB attempt" | "Volume" | "Recovery" | "Balanced";
 
 type ExerciseRecommendation = {
   exercise: LocalExercise;
@@ -31,6 +32,8 @@ type ExerciseRecommendation = {
   daysSinceExercise: number | null;
   pbDaysSince: number | null;
   trend: "up" | "down" | "flat" | "none";
+  goal: ExerciseGoal;
+  pattern: string;
   score: number;
   reason: string;
 };
@@ -40,6 +43,7 @@ type WorkoutRecommendation = {
   muscles: ReturnType<typeof getMuscleFreshness>[];
   exercises: ExerciseRecommendation[];
   score: number;
+  rankScore: number;
   badgeClass: string;
 };
 
@@ -256,9 +260,11 @@ export default function DashboardPage() {
                     <p className="mt-1 text-xs text-zinc-500">{item.reason}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <AgeChip days={item.pbDaysSince} label="PB" />
+                    <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${goalChipClass(item.goal)}`}>
+                      {item.goal}
+                    </span>
                     <span className="text-[10px] text-zinc-600">
-                      {item.primaryMuscle ? MUSCLE_LABELS[item.primaryMuscle] : item.exercise.category ?? "Other"}
+                      {item.pattern}
                     </span>
                   </div>
                 </Link>
@@ -314,18 +320,42 @@ export default function DashboardPage() {
 
 const WORKOUT_MODES: WorkoutMode[] = ["Full Body", "Pierna", "Pull", "Push"];
 
+const TRAINING_BLOCKS = {
+  legs: ["glutes", "quads", "hamstrings", "calves", "lower_back"],
+  push: ["chest", "shoulders_front", "shoulders_side", "triceps"],
+  pull: ["upper_back", "lats", "shoulders_rear", "biceps"],
+} satisfies Record<string, MuscleGroup[]>;
+
 const WORKOUT_TARGETS: Record<WorkoutMode, MuscleGroup[]> = {
-  "Full Body": ALL_MUSCLES,
-  Pierna: ["glutes", "quads", "hamstrings", "calves", "lower_back"],
-  Pull: ["upper_back", "lats", "shoulders_rear", "biceps"],
-  Push: ["chest", "shoulders_front", "shoulders_side", "triceps"],
+  "Full Body": [...TRAINING_BLOCKS.legs, ...TRAINING_BLOCKS.push, ...TRAINING_BLOCKS.pull, "abs"],
+  Pierna: TRAINING_BLOCKS.legs,
+  Pull: TRAINING_BLOCKS.pull,
+  Push: TRAINING_BLOCKS.push,
 };
 
-const FULL_BODY_BUCKETS: MuscleGroup[][] = [
-  ["quads", "glutes", "hamstrings", "calves", "lower_back"],
-  ["chest", "shoulders_front", "shoulders_side", "triceps"],
-  ["upper_back", "lats", "shoulders_rear", "biceps"],
-];
+const PATTERN_TARGETS: Record<WorkoutMode, string[]> = {
+  "Full Body": ["lower compound", "push compound", "pull compound", "accessory", "core"],
+  Pierna: ["knee dominant", "hip hinge", "hamstring curl", "calves", "glute accessory"],
+  Pull: ["vertical pull", "horizontal row", "rear delts", "biceps"],
+  Push: ["horizontal press", "vertical press", "side delts", "triceps"],
+};
+
+const ACCESSORY_MUSCLES = new Set<MuscleGroup>([
+  "abs",
+  "calves",
+  "lower_back",
+  "shoulders_front",
+  "shoulders_side",
+  "shoulders_rear",
+]);
+
+const RECOVERY_SENSITIVE_MUSCLES = new Set<MuscleGroup>([
+  "lower_back",
+  "hamstrings",
+  "quads",
+  "chest",
+  "lats",
+]);
 
 function getWorkoutRecommendations({
   data,
@@ -342,7 +372,9 @@ function getWorkoutRecommendations({
   windowDays: number;
   topN: number;
 }): WorkoutRecommendation[] {
-  const byMuscle = Object.fromEntries(muscleFreshness.map((m) => [m.muscle, m]));
+  const byMuscle: Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>> = Object.fromEntries(
+    muscleFreshness.map((m) => [m.muscle, m])
+  ) as Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>>;
   const exerciseLastTrained = Object.fromEntries(
     Object.entries(exerciseSetMap).map(([exerciseId, sets]) => [
       exerciseId,
@@ -355,11 +387,9 @@ function getWorkoutRecommendations({
     const modeMuscles = targetMuscles
       .map((muscle) => byMuscle[muscle])
       .filter(Boolean)
-      .sort((a, b) => (b.daysSince ?? 999) - (a.daysSince ?? 999));
+      .sort((a, b) => cappedMuscleDays(b) - cappedMuscleDays(a));
     const staleMuscles = modeMuscles.slice(0, mode === "Full Body" ? 5 : 3);
-    const score =
-      staleMuscles.reduce((sum, muscle) => sum + (muscle.daysSince ?? 120), 0) /
-      Math.max(staleMuscles.length, 1);
+    const { score, rankScore } = getWorkoutModeScore(mode, byMuscle);
 
     const exercises = data.exercises
       .map((exercise) =>
@@ -382,16 +412,17 @@ function getWorkoutRecommendations({
       muscles: staleMuscles,
       exercises: selectBalancedExercises(mode, exercises),
       score,
+      rankScore,
       badgeClass:
-        score > 60
+        score > 21
           ? "bg-red-50 text-red-700 border-red-200"
-          : score > 30
+          : score > 14
             ? "bg-orange-50 text-orange-700 border-orange-200"
             : "bg-yellow-50 text-yellow-700 border-yellow-200",
     };
   });
 
-  return byMode.sort((a, b) => b.score - a.score);
+  return byMode.sort((a, b) => b.rankScore - a.rankScore);
 }
 
 function scoreExerciseForWorkout({
@@ -421,14 +452,24 @@ function scoreExerciseForWorkout({
   const daysSinceExercise = getDaysSinceDate(lastTrained);
   const primaryMuscle =
     [...targetEntries].sort((a, b) => b.contribution - a.contribution)[0]?.muscle ?? null;
-  const muscleScore = targetEntries.reduce((sum, entry) => {
-    const days = byMuscle[entry.muscle]?.daysSince ?? 120;
-    return sum + days * entry.contribution;
-  }, 0);
-  const pbScore = Math.min(pb?.daysSince ?? 45, 180) * 0.35;
+  const primaryEntry = targetEntries.find((entry) => entry.muscle === primaryMuscle);
+  const primaryScore = primaryEntry
+    ? cappedMuscleDays(byMuscle[primaryEntry.muscle]) * primaryEntry.contribution * 1.15
+    : 0;
+  const secondaryScore = Math.min(
+    targetEntries
+      .filter((entry) => entry.muscle !== primaryMuscle)
+      .reduce((sum, entry) => sum + cappedMuscleDays(byMuscle[entry.muscle]) * entry.contribution * 0.25, 0),
+    12
+  );
+  const pbScore = Math.min(pb?.daysSince ?? 45, 180) * 0.2;
   const exerciseRestScore = Math.min(daysSinceExercise ?? 45, 90) * 0.15;
   const trendBonus = trend === "flat" ? 12 : trend === "down" ? 8 : 0;
-  const score = muscleScore + pbScore + exerciseRestScore + trendBonus;
+  const recoveryPenalty = getRecoveryPenalty(targetEntries, byMuscle, daysSinceExercise);
+  const score = Math.max(0, primaryScore + secondaryScore + pbScore + exerciseRestScore + trendBonus - recoveryPenalty);
+  const primaryMuscleDays = primaryMuscle ? byMuscle[primaryMuscle]?.daysSince ?? null : null;
+  const goal = getExerciseGoal(pb?.daysSince ?? null, trend, primaryMuscleDays, recoveryPenalty);
+  const pattern = getExercisePattern(exercise, targetEntries, primaryMuscle);
 
   return {
     exercise,
@@ -437,8 +478,10 @@ function scoreExerciseForWorkout({
     daysSinceExercise,
     pbDaysSince: pb?.daysSince ?? null,
     trend,
+    goal,
+    pattern,
     score,
-    reason: getExerciseReason(primaryMuscle, byMuscle[primaryMuscle ?? ""]?.daysSince ?? null, pb?.daysSince ?? null, trend),
+    reason: getExerciseReason(primaryMuscle, primaryMuscleDays, pb?.daysSince ?? null, trend, goal),
   };
 }
 
@@ -446,17 +489,27 @@ function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendati
   const limit = mode === "Full Body" ? 6 : 5;
   const selected: ExerciseRecommendation[] = [];
 
-  if (mode === "Full Body") {
-    for (const bucket of FULL_BODY_BUCKETS) {
-      const picks = ranked.filter((item) => item.muscles.some((muscle) => bucket.includes(muscle)));
-      for (const pick of picks) {
-        if (!selected.some((item) => item.exercise.id === pick.exercise.id)) {
-          selected.push(pick);
-          break;
-        }
-      }
+  for (const pattern of PATTERN_TARGETS[mode]) {
+    const pick = ranked.find(
+      (item) =>
+        matchesWorkoutPattern(mode, item.pattern, pattern) &&
+        !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
+    );
+    if (pick) selected.push(pick);
+  }
+
+  if (mode === "Full Body" && selected.length < 3) {
+    for (const block of Object.values(TRAINING_BLOCKS)) {
+      const pick = ranked.find(
+        (item) =>
+          item.muscles.some((muscle) => block.includes(muscle)) &&
+          !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
+      );
+      if (pick) selected.push(pick);
     }
-  } else {
+  }
+
+  if (mode !== "Full Body") {
     for (const muscle of WORKOUT_TARGETS[mode]) {
       const pick = ranked.find(
         (item) =>
@@ -477,18 +530,155 @@ function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendati
   return selected.slice(0, 7);
 }
 
+function matchesWorkoutPattern(mode: WorkoutMode, exercisePattern: string, targetPattern: string) {
+  if (exercisePattern === targetPattern) return true;
+  if (mode !== "Full Body") return false;
+
+  if (targetPattern === "lower compound") {
+    return ["knee dominant", "hip hinge", "lower compound"].includes(exercisePattern);
+  }
+  if (targetPattern === "push compound") {
+    return ["horizontal press", "vertical press", "push compound"].includes(exercisePattern);
+  }
+  if (targetPattern === "pull compound") {
+    return ["vertical pull", "horizontal row", "pull compound"].includes(exercisePattern);
+  }
+  if (targetPattern === "accessory") {
+    return ["side delts", "rear delts", "biceps", "triceps", "glute accessory", "calves", "accessory"].includes(exercisePattern);
+  }
+
+  return false;
+}
+
+function getWorkoutModeScore(
+  mode: WorkoutMode,
+  byMuscle: Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>>
+) {
+  if (mode === "Full Body") {
+    const legScore = getBlockScore(TRAINING_BLOCKS.legs, byMuscle);
+    const pushScore = getBlockScore(TRAINING_BLOCKS.push, byMuscle);
+    const pullScore = getBlockScore(TRAINING_BLOCKS.pull, byMuscle);
+    const score = (legScore + pushScore + pullScore) / 3;
+    const eligible = [legScore, pushScore, pullScore].every((blockScore) => blockScore >= 7);
+    return {
+      score,
+      rankScore: eligible ? score : score * 0.45,
+    };
+  }
+
+  const score = getBlockScore(WORKOUT_TARGETS[mode], byMuscle);
+  return { score, rankScore: score };
+}
+
+function getBlockScore(
+  muscles: MuscleGroup[],
+  byMuscle: Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>>
+) {
+  const stale = muscles
+    .map((muscle) => cappedMuscleDays(byMuscle[muscle]))
+    .sort((a, b) => b - a)
+    .slice(0, 3);
+  return stale.reduce((sum, days) => sum + days, 0) / Math.max(stale.length, 1);
+}
+
+function cappedMuscleDays(freshness: ReturnType<typeof getMuscleFreshness> | undefined) {
+  if (!freshness) return 0;
+  const cap = ACCESSORY_MUSCLES.has(freshness.muscle) ? 21 : 30;
+  return Math.min(freshness.daysSince ?? cap, cap);
+}
+
+function getRecoveryPenalty(
+  entries: Array<{ muscle: MuscleGroup; contribution: number }>,
+  byMuscle: Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>>,
+  daysSinceExercise: number | null
+) {
+  let penalty = 0;
+
+  for (const entry of entries) {
+    const days = byMuscle[entry.muscle]?.daysSince;
+    if (days !== null && days !== undefined && days <= 2) {
+      penalty += entry.contribution >= 0.8 ? 30 : 12;
+      if (RECOVERY_SENSITIVE_MUSCLES.has(entry.muscle)) penalty += 15;
+    }
+  }
+
+  if (daysSinceExercise !== null && daysSinceExercise <= 2) penalty += 20;
+  else if (daysSinceExercise !== null && daysSinceExercise <= 7) penalty += 10;
+
+  return penalty;
+}
+
+function getExerciseGoal(
+  pbDays: number | null,
+  trend: "up" | "down" | "flat" | "none",
+  muscleDays: number | null,
+  recoveryPenalty: number
+): ExerciseGoal {
+  if (recoveryPenalty >= 25) return "Recovery";
+  if ((pbDays ?? 0) >= 45 && trend === "flat" && (muscleDays ?? 0) >= 7) return "PB attempt";
+  if ((muscleDays ?? 0) >= 10) return "Volume";
+  return "Balanced";
+}
+
+function getExercisePattern(
+  exercise: LocalExercise,
+  entries: Array<{ muscle: MuscleGroup; contribution: number }>,
+  primaryMuscle: MuscleGroup | null
+) {
+  const name = exercise.name.toLowerCase();
+  const category = (exercise.category ?? "").toLowerCase();
+  const muscles = entries.map((entry) => entry.muscle);
+
+  if (name.includes("curl") && muscles.includes("hamstrings")) return "hamstring curl";
+  if (name.includes("calf")) return "calves";
+  if (name.includes("abductor") || name.includes("hip thrust") || name.includes("glute")) return "glute accessory";
+  if (name.includes("squat") || (name.includes("press") && category.includes("leg"))) return "knee dominant";
+  if (name.includes("deadlift") || name.includes("rdl") || name.includes("hinge")) return "hip hinge";
+
+  if (name.includes("pull-up") || name.includes("pulldown") || name.includes("chin")) return "vertical pull";
+  if (name.includes("row") || name.includes("remo")) return "horizontal row";
+  if (name.includes("reverse fly") || primaryMuscle === "shoulders_rear") return "rear delts";
+  if (primaryMuscle === "biceps") return "biceps";
+
+  if (name.includes("bench") || name.includes("dip") || name.includes("fly")) return "horizontal press";
+  if (name.includes("overhead") || name.includes("shoulder press") || name.includes("military")) return "vertical press";
+  if (name.includes("lateral") || primaryMuscle === "shoulders_side") return "side delts";
+  if (primaryMuscle === "triceps") return "triceps";
+
+  if (primaryMuscle === "abs") return "core";
+  if (muscles.some((muscle) => TRAINING_BLOCKS.legs.includes(muscle))) return "lower compound";
+  if (muscles.some((muscle) => TRAINING_BLOCKS.push.includes(muscle))) return "push compound";
+  if (muscles.some((muscle) => TRAINING_BLOCKS.pull.includes(muscle))) return "pull compound";
+  return "accessory";
+}
+
 function getExerciseReason(
   muscle: MuscleGroup | null,
   muscleDays: number | null,
   pbDays: number | null,
-  trend: "up" | "down" | "flat" | "none"
+  trend: "up" | "down" | "flat" | "none",
+  goal: ExerciseGoal
 ) {
   const muscleText = muscle
     ? `${MUSCLE_LABELS[muscle]} ${formatDaysAgo(muscleDays).toLowerCase()}`
     : "Buen encaje para la sesión";
   const pbText = pbDays === null ? "sin PB registrado" : `PB ${formatDaysAgo(pbDays).toLowerCase()}`;
   const trendText = trend === "flat" ? "marca plana" : trend === "down" ? "conviene reactivar" : "buen momento";
-  return `${muscleText} · ${pbText} · ${trendText}`;
+  return `${muscleText} · ${pbText} · ${trendText} · ${goal}`;
+}
+
+function goalChipClass(goal: ExerciseGoal) {
+  switch (goal) {
+    case "PB attempt":
+      return "bg-amber-50 text-amber-700 border-amber-200";
+    case "Volume":
+      return "bg-blue-50 text-blue-700 border-blue-200";
+    case "Recovery":
+      return "bg-slate-50 text-slate-600 border-slate-200";
+    case "Balanced":
+    default:
+      return "bg-green-50 text-green-700 border-green-200";
+  }
 }
 
 function AgeChip({ days, label }: { days: number | null; label?: string }) {
