@@ -25,6 +25,20 @@ import TrendBadge from "@/components/ui/TrendBadge";
 type WorkoutMode = "Full Body" | "Pierna" | "Pull" | "Push";
 type ExerciseGoal = "PB attempt" | "Volume" | "Recovery" | "Balanced";
 
+type ExercisePrescription = {
+  sets: number;
+  reps: string;
+  weightKg: number | null;
+  note: string;
+};
+
+type ExerciseTrainingSet = {
+  weightKg: number | null;
+  reps: number;
+  date: string;
+  e1rm: number;
+};
+
 type ExerciseRecommendation = {
   exercise: LocalExercise;
   muscles: MuscleGroup[];
@@ -36,6 +50,7 @@ type ExerciseRecommendation = {
   pattern: string;
   score: number;
   reason: string;
+  prescription: ExercisePrescription;
 };
 
 type WorkoutRecommendation = {
@@ -76,6 +91,7 @@ export default function DashboardPage() {
     : null;
 
   const exerciseSetMap: Record<string, SetWithE1RM[]> = {};
+  const exerciseTrainingSetMap: Record<string, ExerciseTrainingSet[]> = {};
   const exerciseInfoMap = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
 
   for (const set of data.sets) {
@@ -86,6 +102,13 @@ export default function DashboardPage() {
     const e1rm = calculateE1RM(eff, set.reps);
     if (!exerciseSetMap[exercise.id]) exerciseSetMap[exercise.id] = [];
     exerciseSetMap[exercise.id].push({ e1rm, date: workout.date });
+    if (!exerciseTrainingSetMap[exercise.id]) exerciseTrainingSetMap[exercise.id] = [];
+    exerciseTrainingSetMap[exercise.id].push({
+      weightKg: set.weight_kg,
+      reps: set.reps,
+      date: workout.date,
+      e1rm,
+    });
   }
 
   const muscleMap: Record<string, MuscleGroup[]> = {};
@@ -119,6 +142,7 @@ export default function DashboardPage() {
   const workoutRecommendations = getWorkoutRecommendations({
     data,
     exerciseSetMap,
+    exerciseTrainingSetMap,
     muscleContributionMap,
     muscleFreshness,
     windowDays,
@@ -258,6 +282,18 @@ export default function DashboardPage() {
                       <p className="font-semibold text-zinc-200 truncate">{item.exercise.name}</p>
                     </div>
                     <p className="mt-1 text-xs text-zinc-500">{item.reason}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
+                        {item.prescription.sets} series
+                      </span>
+                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
+                        {item.prescription.reps} reps
+                      </span>
+                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
+                        {formatPrescriptionWeight(item.exercise, item.prescription.weightKg)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-zinc-600">{item.prescription.note}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${goalChipClass(item.goal)}`}>
@@ -360,6 +396,7 @@ const RECOVERY_SENSITIVE_MUSCLES = new Set<MuscleGroup>([
 function getWorkoutRecommendations({
   data,
   exerciseSetMap,
+  exerciseTrainingSetMap,
   muscleContributionMap,
   muscleFreshness,
   windowDays,
@@ -367,6 +404,7 @@ function getWorkoutRecommendations({
 }: {
   data: LocalData;
   exerciseSetMap: Record<string, SetWithE1RM[]>;
+  exerciseTrainingSetMap: Record<string, ExerciseTrainingSet[]>;
   muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>;
   muscleFreshness: ReturnType<typeof getMuscleFreshness>[];
   windowDays: number;
@@ -397,6 +435,7 @@ function getWorkoutRecommendations({
           exercise,
           muscles: muscleContributionMap[exercise.id] ?? [],
           exerciseSets: exerciseSetMap[exercise.id] ?? [],
+          trainingSets: exerciseTrainingSetMap[exercise.id] ?? [],
           lastTrained: exerciseLastTrained[exercise.id] ?? null,
           targetMuscles,
           byMuscle,
@@ -429,6 +468,7 @@ function scoreExerciseForWorkout({
   exercise,
   muscles,
   exerciseSets,
+  trainingSets,
   lastTrained,
   targetMuscles,
   byMuscle,
@@ -438,6 +478,7 @@ function scoreExerciseForWorkout({
   exercise: LocalExercise;
   muscles: Array<{ muscle: MuscleGroup; contribution: number }>;
   exerciseSets: SetWithE1RM[];
+  trainingSets: ExerciseTrainingSet[];
   lastTrained: string | null;
   targetMuscles: MuscleGroup[];
   byMuscle: Record<string, ReturnType<typeof getMuscleFreshness>>;
@@ -470,6 +511,7 @@ function scoreExerciseForWorkout({
   const primaryMuscleDays = primaryMuscle ? byMuscle[primaryMuscle]?.daysSince ?? null : null;
   const goal = getExerciseGoal(pb?.daysSince ?? null, trend, primaryMuscleDays, recoveryPenalty);
   const pattern = getExercisePattern(exercise, targetEntries, primaryMuscle);
+  const prescription = getExercisePrescription(exercise, trainingSets, goal, pattern);
 
   return {
     exercise,
@@ -482,6 +524,7 @@ function scoreExerciseForWorkout({
     pattern,
     score,
     reason: getExerciseReason(primaryMuscle, primaryMuscleDays, pb?.daysSince ?? null, trend, goal),
+    prescription,
   };
 }
 
@@ -665,6 +708,123 @@ function getExerciseReason(
   const pbText = pbDays === null ? "sin PB registrado" : `PB ${formatDaysAgo(pbDays).toLowerCase()}`;
   const trendText = trend === "flat" ? "marca plana" : trend === "down" ? "conviene reactivar" : "buen momento";
   return `${muscleText} · ${pbText} · ${trendText} · ${goal}`;
+}
+
+function getExercisePrescription(
+  exercise: LocalExercise,
+  trainingSets: ExerciseTrainingSet[],
+  goal: ExerciseGoal,
+  pattern: string
+): ExercisePrescription {
+  const topSets = getWorkoutTopTrainingSets(trainingSets);
+  const lastTopSet = topSets.at(-1) ?? null;
+  const progression = getProgressionSuggestion(
+    topSets.map((set) => ({
+      weight: set.weightKg ?? 0,
+      reps: set.reps,
+      date: set.date,
+    }))
+  );
+  const isAccessory = [
+    "accessory",
+    "biceps",
+    "triceps",
+    "side delts",
+    "rear delts",
+    "calves",
+    "core",
+    "hamstring curl",
+    "glute accessory",
+  ].includes(pattern);
+  const defaultSets = isAccessory ? 3 : 4;
+
+  if (!lastTopSet) {
+    return {
+      sets: defaultSets,
+      reps: isAccessory ? "10-15" : "8-10",
+      weightKg: null,
+      note: "Sin historial: empieza suave y deja 2-3 reps en recámara.",
+    };
+  }
+
+  const progressedWeight =
+    progression?.suggestedWeight !== null && progression?.suggestedWeight !== undefined && progression.suggestedWeight > 0
+      ? progression.suggestedWeight
+      : null;
+  const baseWeight = progressedWeight ?? lastTopSet.weightKg;
+  const reducedWeight = getRecoveryWeight(exercise, baseWeight);
+
+  if (goal === "Recovery") {
+    return {
+      sets: Math.max(2, defaultSets - 1),
+      reps: isAccessory ? "12-15" : "8-12",
+      weightKg: reducedWeight,
+      note: "Día de mantener: RPE 6-7, técnica limpia.",
+    };
+  }
+
+  if (goal === "PB attempt") {
+    const targetReps = progressedWeight ? getRepRange(lastTopSet.reps - 2, lastTopSet.reps) : getRepRange(lastTopSet.reps - 1, lastTopSet.reps + 1);
+    return {
+      sets: defaultSets,
+      reps: targetReps,
+      weightKg: baseWeight,
+      note: progressedWeight ? "Subida sugerida por progresión reciente." : "Aprieta solo si el calentamiento se mueve bien.",
+    };
+  }
+
+  if (goal === "Volume") {
+    return {
+      sets: defaultSets,
+      reps: isAccessory ? "12-15" : "8-12",
+      weightKg: baseWeight,
+      note: "Busca volumen sólido con 1-2 reps en recámara.",
+    };
+  }
+
+  return {
+    sets: defaultSets,
+    reps: isAccessory ? getRepRange(lastTopSet.reps, lastTopSet.reps + 3) : getRepRange(lastTopSet.reps - 1, lastTopSet.reps + 2),
+    weightKg: baseWeight,
+    note: "Mantén el peso si va justo; sube solo si las reps salen limpias.",
+  };
+}
+
+function getWorkoutTopTrainingSets(trainingSets: ExerciseTrainingSet[]) {
+  const byDate: Record<string, ExerciseTrainingSet[]> = {};
+
+  for (const set of trainingSets) {
+    if (!byDate[set.date]) byDate[set.date] = [];
+    byDate[set.date].push(set);
+  }
+
+  return Object.values(byDate)
+    .map((daySets) => daySets.reduce((best, cur) => (cur.e1rm > best.e1rm ? cur : best)))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function getRepRange(min: number, max: number) {
+  const safeMin = Math.max(1, Math.round(min));
+  const safeMax = Math.max(safeMin, Math.round(max));
+  return safeMin === safeMax ? `${safeMin}` : `${safeMin}-${safeMax}`;
+}
+
+function roundToNearestIncrement(value: number, increment = 2.5) {
+  return Math.round(value / increment) * increment;
+}
+
+function getRecoveryWeight(exercise: LocalExercise, weightKg: number | null) {
+  if (weightKg === null) return null;
+  if (!exercise.is_bodyweight || weightKg >= 0) return roundToNearestIncrement(weightKg * 0.9);
+  return roundToNearestIncrement(weightKg * 1.1);
+}
+
+function formatPrescriptionWeight(exercise: LocalExercise, weightKg: number | null) {
+  if (weightKg === null) return exercise.is_bodyweight ? "BW" : "Carga libre";
+  if (!exercise.is_bodyweight) return formatKg(weightKg);
+  if (weightKg === 0) return "BW";
+  if (weightKg > 0) return `BW + ${formatKg(weightKg)}`;
+  return `BW - ${formatKg(Math.abs(weightKg))}`;
 }
 
 function goalChipClass(goal: ExerciseGoal) {
