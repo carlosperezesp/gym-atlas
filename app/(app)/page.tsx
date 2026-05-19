@@ -281,18 +281,11 @@ export default function DashboardPage() {
                       </span>
                       <p className="font-semibold text-zinc-200 truncate">{item.exercise.name}</p>
                     </div>
+                    <p className="mt-1 text-sm font-semibold text-zinc-700">
+                      {item.prescription.sets} series · {item.prescription.reps} reps ·{" "}
+                      {formatPrescriptionWeight(item.exercise, item.prescription.weightKg)}
+                    </p>
                     <p className="mt-1 text-xs text-zinc-500">{item.reason}</p>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
-                        {item.prescription.sets} series
-                      </span>
-                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
-                        {item.prescription.reps} reps
-                      </span>
-                      <span className="rounded-md border border-zinc-800/70 bg-zinc-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-300">
-                        {formatPrescriptionWeight(item.exercise, item.prescription.weightKg)}
-                      </span>
-                    </div>
                     <p className="mt-1 text-[10px] text-zinc-600">{item.prescription.note}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
@@ -706,7 +699,13 @@ function getExerciseReason(
     ? `${MUSCLE_LABELS[muscle]} ${formatDaysAgo(muscleDays).toLowerCase()}`
     : "Buen encaje para la sesión";
   const pbText = pbDays === null ? "sin PB registrado" : `PB ${formatDaysAgo(pbDays).toLowerCase()}`;
-  const trendText = trend === "flat" ? "marca plana" : trend === "down" ? "conviene reactivar" : "buen momento";
+  const trendText = trend === "flat"
+    ? "marca plana"
+    : trend === "down"
+      ? "conviene reactivar"
+      : trend === "up"
+        ? "progreso reciente"
+        : "sin tendencia clara";
   return `${muscleText} · ${pbText} · ${trendText} · ${goal}`;
 }
 
