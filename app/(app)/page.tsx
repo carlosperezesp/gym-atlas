@@ -349,11 +349,11 @@ export default function DashboardPage() {
 
 const WORKOUT_MODES: WorkoutMode[] = ["Full Body", "Pierna", "Pull", "Push"];
 
-const TRAINING_BLOCKS = {
+const TRAINING_BLOCKS: Record<"legs" | "push" | "pull", MuscleGroup[]> = {
   legs: ["glutes", "quads", "hamstrings", "calves", "lower_back"],
   push: ["chest", "shoulders_front", "shoulders_side", "triceps"],
   pull: ["upper_back", "lats", "shoulders_rear", "biceps"],
-} satisfies Record<string, MuscleGroup[]>;
+};
 
 const WORKOUT_TARGETS: Record<WorkoutMode, MuscleGroup[]> = {
   "Full Body": [...TRAINING_BLOCKS.legs, ...TRAINING_BLOCKS.push, ...TRAINING_BLOCKS.pull, "abs"],
