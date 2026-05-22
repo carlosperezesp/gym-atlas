@@ -51,6 +51,7 @@ export type LocalSettings = {
   freshness_orange_days: number;
   current_level_window_days: number;
   current_level_top_sets: number;
+  weekly_workout_target: number;
 };
 
 export type LocalData = {
@@ -73,6 +74,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   freshness_orange_days: 14,
   current_level_window_days: 60,
   current_level_top_sets: 3,
+  weekly_workout_target: 3,
 };
 
 const DEFAULT_EXERCISES: LocalExercise[] = [

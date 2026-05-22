@@ -10,6 +10,7 @@ create table if not exists public.profiles (
   freshness_orange_days     integer not null default 14,
   current_level_window_days integer not null default 60,
   current_level_top_sets    integer not null default 3,
+  weekly_workout_target     integer not null default 3,
   created_at                timestamptz not null default now()
 );
 

@@ -163,7 +163,8 @@ export type WorkoutTopSet = {
 };
 
 export function getProgressionSuggestion(
-  recentWorkoutTopSets: WorkoutTopSet[]
+  recentWorkoutTopSets: WorkoutTopSet[],
+  options: { isBodyweight?: boolean } = {}
 ): { suggest: boolean; suggestedWeight: number | null; message: string } | null {
   // Need at least 3 recent workouts for this exercise
   if (recentWorkoutTopSets.length < 3) return null;
@@ -176,12 +177,22 @@ export function getProgressionSuggestion(
   const repsNonDecreasing = b.reps >= a.reps && c.reps >= b.reps;
 
   if (sameWeight && repsNonDecreasing) {
+    if (options.isBodyweight && c.weight <= 0) {
+      return {
+        suggest: true,
+        suggestedWeight: null,
+        message: `You've done bodyweight × ${c.reps}+ for 3 sessions. Next time try adding reps, slower tempo, or a small external load.`,
+      };
+    }
+
     // Suggest ~10% increase rounded to nearest 2.5
     const suggested = Math.ceil((c.weight * 1.1) / 2.5) * 2.5;
+    const currentLoad = options.isBodyweight ? `BW + ${c.weight}kg` : `${c.weight}kg`;
+    const suggestedLoad = options.isBodyweight ? `BW + ${suggested}kg` : `${suggested}kg`;
     return {
       suggest: true,
       suggestedWeight: suggested,
-      message: `You've done ${c.weight}kg × ${c.reps}+ for 3 sessions. Try ${suggested}kg next time.`,
+      message: `You've done ${currentLoad} × ${c.reps}+ for 3 sessions. Try ${suggestedLoad} next time.`,
     };
   }
 

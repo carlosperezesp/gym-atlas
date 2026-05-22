@@ -167,6 +167,11 @@ export default function LogPage() {
       acc[set.workout_id].push(set);
       return acc;
     }, {});
+    const workoutsByDate = workoutsInRange.reduce<Record<string, typeof workoutsInRange>>((acc, workout) => {
+      if (!acc[workout.date]) acc[workout.date] = [];
+      acc[workout.date].push(workout);
+      return acc;
+    }, {});
 
     const lines: string[] = [
       `Gym workout export`,
@@ -178,12 +183,14 @@ export default function LogPage() {
     if (!workoutsInRange.length) {
       lines.push(`No workouts found between ${formatDateLabel(exportStartDate)} and ${formatDateLabel(exportEndDate)}.`);
     } else {
-      for (const workout of workoutsInRange) {
-        lines.push(`=== ${formatDateLabel(workout.date)} ===`);
-        if (workout.notes) lines.push(`Notes: ${workout.notes}`);
+      for (const [date, dayWorkouts] of Object.entries(workoutsByDate).sort(([a], [b]) => a.localeCompare(b))) {
+        lines.push(`=== ${formatDateLabel(date)} ===`);
 
-        const workoutSets = setsByWorkout[workout.id] ?? [];
-        const groupedByExercise = workoutSets.reduce<Record<string, LocalSet[]>>((acc, set) => {
+        const notes = dayWorkouts.map((workout) => workout.notes).filter(Boolean);
+        if (notes.length) lines.push(`Notes: ${notes.join(" | ")}`);
+
+        const daySets = dayWorkouts.flatMap((workout) => setsByWorkout[workout.id] ?? []);
+        const groupedByExercise = daySets.reduce<Record<string, LocalSet[]>>((acc, set) => {
           const name = exerciseMap[set.exercise_id] ?? "Unknown exercise";
           if (!acc[name]) acc[name] = [];
           acc[name].push(set);

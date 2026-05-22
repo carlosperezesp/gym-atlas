@@ -86,7 +86,7 @@ export default function ExerciseDetailPage() {
         return calculateE1RM(cEff, cur.reps) > calculateE1RM(bEff, cur.reps) ? cur : best;
       })
     );
-  const suggestion = getProgressionSuggestion(topSetsPerDay);
+  const suggestion = getProgressionSuggestion(topSetsPerDay, { isBodyweight: exercise.is_bodyweight });
 
   const chartDataMap: Record<string, number> = {};
   for (const set of e1rmSets) {

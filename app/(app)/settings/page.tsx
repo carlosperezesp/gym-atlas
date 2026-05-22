@@ -13,6 +13,7 @@ export default function SettingsPage() {
   const [orangeDays, setOrangeDays] = useState("14");
   const [windowDays, setWindowDays] = useState("60");
   const [topSets, setTopSets] = useState("3");
+  const [weeklyTarget, setWeeklyTarget] = useState("3");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -25,6 +26,7 @@ export default function SettingsPage() {
     setOrangeDays(data.settings.freshness_orange_days?.toString() ?? "14");
     setWindowDays(data.settings.current_level_window_days?.toString() ?? "60");
     setTopSets(data.settings.current_level_top_sets?.toString() ?? "3");
+    setWeeklyTarget(data.settings.weekly_workout_target?.toString() ?? "3");
     setLoading(false);
   }, []);
 
@@ -44,6 +46,7 @@ export default function SettingsPage() {
         freshness_orange_days: parseInt(orangeDays) || 14,
         current_level_window_days: parseInt(windowDays) || 60,
         current_level_top_sets: parseInt(topSets) || 3,
+        weekly_workout_target: parseInt(weeklyTarget) || 3,
       },
     });
 
@@ -62,6 +65,7 @@ export default function SettingsPage() {
     setOrangeDays(fresh.settings.freshness_orange_days.toString());
     setWindowDays(fresh.settings.current_level_window_days.toString());
     setTopSets(fresh.settings.current_level_top_sets.toString());
+    setWeeklyTarget(fresh.settings.weekly_workout_target.toString());
     setSuccess(true);
     router.refresh();
   }
@@ -103,6 +107,27 @@ export default function SettingsPage() {
           />
           <p className="text-xs text-zinc-600 mt-1">
             Used for bodyweight exercise calculations (pull-ups, dips).
+          </p>
+        </div>
+      </div>
+
+      {/* Frequency */}
+      <div className="card p-4 space-y-4">
+        <p className="section-label">Training Frequency</p>
+        <div>
+          <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">
+            Weekly workout target
+          </label>
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="14"
+            value={weeklyTarget}
+            onChange={(e) => setWeeklyTarget(e.target.value)}
+          />
+          <p className="text-xs text-zinc-600 mt-1">
+            Used to compare your last 30 days against your target pace.
           </p>
         </div>
       </div>

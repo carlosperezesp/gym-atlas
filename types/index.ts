@@ -6,6 +6,7 @@ export type Profile = {
   freshness_orange_days: number;
   current_level_window_days: number;
   current_level_top_sets: number;
+  weekly_workout_target: number;
   created_at: string;
 };
 

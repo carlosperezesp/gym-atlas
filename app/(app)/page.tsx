@@ -89,6 +89,29 @@ export default function DashboardPage() {
   const lastWorkoutDays = lastWorkoutDate
     ? Math.floor((Date.now() - new Date(lastWorkoutDate).getTime()) / 86400000)
     : null;
+  const frequencyWindowDays = 30;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const frequencyCutoff = new Date(today);
+  frequencyCutoff.setDate(frequencyCutoff.getDate() - (frequencyWindowDays - 1));
+  const todayKey = formatDateKey(today);
+  const cutoffKey = formatDateKey(frequencyCutoff);
+  const workoutDaysLast30 = new Set(
+    data.workouts
+      .filter((workout) => workout.date >= cutoffKey && workout.date <= todayKey)
+      .map((workout) => workout.date)
+  ).size;
+  const weeklyTarget = Math.max(1, data.settings.weekly_workout_target ?? 3);
+  const targetDaysLast30 = weeklyTarget * (frequencyWindowDays / 7);
+  const weeklyAverage = workoutDaysLast30 / (frequencyWindowDays / 7);
+  const frequencyProgress = Math.min(100, Math.round((workoutDaysLast30 / targetDaysLast30) * 100));
+  const frequencyDelta = Math.round(workoutDaysLast30 - targetDaysLast30);
+  const frequencyStatus =
+    Math.abs(frequencyDelta) <= 1
+      ? "On pace"
+      : frequencyDelta > 1
+        ? `${frequencyDelta} days ahead`
+        : `${Math.abs(frequencyDelta)} days behind`;
 
   const exerciseSetMap: Record<string, SetWithE1RM[]> = {};
   const exerciseTrainingSetMap: Record<string, ExerciseTrainingSet[]> = {};
@@ -185,7 +208,7 @@ export default function DashboardPage() {
       )
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    const suggestion = getProgressionSuggestion(topSets);
+    const suggestion = getProgressionSuggestion(topSets, { isBodyweight: exercise.is_bodyweight });
     if (suggestion?.suggest) {
       progressionAlerts.push({
         name: exercise.name,
@@ -212,6 +235,44 @@ export default function DashboardPage() {
         </div>
         <Link href="/log" className="btn btn-primary text-sm px-4 py-2">+ Log</Link>
       </div>
+
+      <section>
+        <p className="section-label">Training Frequency</p>
+        <div className="card p-4 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Last 30 days</p>
+              <p className="text-3xl font-semibold text-zinc-100 mt-1">{workoutDaysLast30}</p>
+              <p className="text-xs text-zinc-500 mt-0.5">workout days</p>
+            </div>
+            <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+              frequencyDelta < -1
+                ? "bg-orange-50 text-orange-700 border-orange-200"
+                : "bg-green-50 text-green-700 border-green-200"
+            }`}>
+              {frequencyStatus}
+            </span>
+          </div>
+
+          <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500"
+              style={{ width: `${frequencyProgress}%` }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600">Avg / week</p>
+              <p className="font-mono text-zinc-300 mt-0.5">{weeklyAverage.toFixed(1)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600">Target / week</p>
+              <p className="font-mono text-zinc-300 mt-0.5">{weeklyTarget}</p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section>
         <p className="section-label">Muscle Freshness</p>
@@ -345,6 +406,13 @@ export default function DashboardPage() {
       )}
     </div>
   );
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 const WORKOUT_MODES: WorkoutMode[] = ["Full Body", "Pierna", "Pull", "Push"];
@@ -722,7 +790,8 @@ function getExercisePrescription(
       weight: set.weightKg ?? 0,
       reps: set.reps,
       date: set.date,
-    }))
+    })),
+    { isBodyweight: exercise.is_bodyweight }
   );
   const isAccessory = [
     "accessory",
