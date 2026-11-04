@@ -9,7 +9,6 @@ import {
   IMPORTED_WORKOUTS,
 } from "@/lib/imported-workouts";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
-import { createClient } from "@/lib/supabase/client";
 
 export type LocalExercise = {
   id: string;
@@ -65,7 +64,6 @@ export type LocalData = {
 };
 
 const STORAGE_KEY = "gymos.local.v1";
-const CLOUD_STATE_ID = process.env.NEXT_PUBLIC_GYM_ATLAS_STATE_ID || "default";
 
 const DEFAULT_SETTINGS: LocalSettings = {
   bodyweight_kg: 75,
@@ -232,14 +230,12 @@ export async function syncCloudData(): Promise<{ changed: boolean; data: LocalDa
 
   const localRaw = window.localStorage.getItem(STORAGE_KEY);
   const localData = localRaw ? loadData() : defaultData();
-  const client = createClient();
-  const { data: row, error } = await client
-    .from("app_state")
-    .select("data, updated_at")
-    .eq("id", CLOUD_STATE_ID)
-    .maybeSingle();
-
-  if (error) {
+  let row: { data: Partial<LocalData> | null; updated_at: string | null };
+  try {
+    const response = await fetch("/api/state", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Status ${response.status}`);
+    row = await response.json();
+  } catch (error) {
     console.warn("GymATLAS cloud sync failed", error);
     return { changed: false, data: localData, mode: "local" };
   }
@@ -255,8 +251,8 @@ export async function syncCloudData(): Promise<{ changed: boolean; data: LocalDa
   }
 
   const cloudData = normalizeData({
-    ...(row.data as Partial<LocalData>),
-    updatedAt: (row.data as Partial<LocalData>).updatedAt ?? row.updated_at,
+    ...row.data,
+    updatedAt: row.data.updatedAt ?? row.updated_at ?? undefined,
   });
 
   const cloudUpdatedAt = Date.parse(cloudData.updatedAt ?? "");
@@ -276,17 +272,17 @@ async function saveCloudData(data: LocalData) {
   if (!isCloudSyncEnabled()) return;
 
   try {
-    const client = createClient();
     const updatedAt = data.updatedAt ?? new Date().toISOString();
-    const { error } = await client
-      .from("app_state")
-      .upsert({
-        id: CLOUD_STATE_ID,
+    const response = await fetch("/api/state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         data: { ...normalizeData(data), updatedAt },
         updated_at: updatedAt,
-      });
+      }),
+    });
 
-    if (error) console.warn("GymATLAS cloud save failed", error);
+    if (!response.ok) console.warn("GymATLAS cloud save failed", response.status);
   } catch (error) {
     console.warn("GymATLAS cloud save failed", error);
   }
