@@ -96,6 +96,7 @@ Open [http://localhost:3000](http://localhost:3000).
 3. Add environment variables:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `APP_PASSCODE`: the access code for the app. Use 12+ characters. Without it, production stays locked. Changing it signs out every device.
 4. Deploy
 
 ### Supabase Auth redirect
