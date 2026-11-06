@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { loadData, makeId, saveData, type LocalExercise, type LocalSet } from "@/lib/local-store";
 import { useRouter } from "next/navigation";
+import { toDateKey } from "@/lib/calculations";
 
 type SetEntry = {
   weight_kg: string;
@@ -22,7 +23,7 @@ const emptyBlock = (): ExerciseBlock => ({ exercise_id: "", sets: [emptySet()] }
 export default function LogPage() {
   const router = useRouter();
 
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => toDateKey(new Date()));
   const [notes, setNotes] = useState("");
   const [blocks, setBlocks] = useState<ExerciseBlock[]>([emptyBlock()]);
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
@@ -34,9 +35,9 @@ export default function LogPage() {
     const today = new Date();
     const prev = new Date(today);
     prev.setDate(today.getDate() - 30);
-    return prev.toISOString().split("T")[0];
+    return toDateKey(prev);
   });
-  const [exportEndDate, setExportEndDate] = useState(new Date().toISOString().split("T")[0]);
+  const [exportEndDate, setExportEndDate] = useState(() => toDateKey(new Date()));
   const [exportText, setExportText] = useState("");
   const [exportStatus, setExportStatus] = useState<"idle" | "ready" | "copied">("idle");
   const [exportError, setExportError] = useState("");
@@ -46,6 +47,20 @@ export default function LogPage() {
   }, []);
 
   useEffect(() => { loadExercises(); }, [loadExercises]);
+
+  // The dashboard's "Registrar" button opens this page with the planned set
+  // already filled in, so logging between sets is one tap plus corrections.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const exerciseId = params.get("exercise");
+    if (!exerciseId) return;
+    setBlocks([
+      {
+        exercise_id: exerciseId,
+        sets: [{ ...emptySet(), weight_kg: params.get("weight") ?? "", reps: params.get("reps") ?? "" }],
+      },
+    ]);
+  }, []);
 
   function updateBlock(i: number, update: Partial<ExerciseBlock>) {
     setBlocks((prev) => prev.map((b, idx) => idx === i ? { ...b, ...update } : b));
@@ -101,12 +116,20 @@ export default function LogPage() {
     setLoading(true);
     try {
       const data = loadData();
-      const workout = {
-        id: makeId("workout"),
-        date,
-        notes: notes || null,
-        created_at: new Date().toISOString(),
-      };
+      // Sets logged one at a time belong to the same session: append to the
+      // day's existing workout instead of creating a new one per save.
+      const existing = data.workouts
+        .filter((w) => w.date === date)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .at(-1);
+      const workout = existing
+        ? { ...existing, notes: [existing.notes, notes].filter(Boolean).join(" | ") || null }
+        : {
+            id: makeId("workout"),
+            date,
+            notes: notes || null,
+            created_at: new Date().toISOString(),
+          };
 
       const setsToInsert = blocks.flatMap((block) =>
         block.sets.map((s) => ({
@@ -123,7 +146,9 @@ export default function LogPage() {
 
       saveData({
         ...data,
-        workouts: [...data.workouts, workout],
+        workouts: existing
+          ? data.workouts.map((w) => (w.id === existing.id ? workout : w))
+          : [...data.workouts, workout],
         sets: [...data.sets, ...setsToInsert],
       });
 
@@ -287,78 +312,6 @@ export default function LogPage() {
         </div>
       </div>
 
-      <div className="card p-4 space-y-3">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 flex-1">
-            <div>
-              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">Start date</label>
-              <input
-                className="input"
-                type="date"
-                value={exportStartDate}
-                onChange={(e) => setExportStartDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">End date</label>
-              <input
-                className="input"
-                type="date"
-                value={exportEndDate}
-                onChange={(e) => setExportEndDate(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button onClick={generateExportText} className="btn btn-secondary">
-              Generate export
-            </button>
-            <button onClick={handleCopyExport} className="btn btn-ghost">
-              Copy text
-            </button>
-            <button onClick={handlePrintExport} className="btn btn-ghost">
-              Print / PDF
-            </button>
-          </div>
-        </div>
-
-        {exportError && (
-          <div className="card-sm p-3 border-red-500/20 bg-red-500/8 text-red-400 text-sm">
-            {exportError}
-          </div>
-        )}
-
-        {exportText && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm text-zinc-300">Export text ready{exportStatus === "copied" ? " — copied!" : ""}.</p>
-              <p className="text-xs text-zinc-500">Use copy or print to export.</p>
-            </div>
-            <textarea
-              className="input h-48 font-mono text-sm resize-none"
-              readOnly
-              value={exportText}
-            />
-          </div>
-        )}
-
-        <div id="export-print-area" className="hidden p-4 bg-white text-black" aria-hidden="true">
-          <div className="space-y-2">
-            <h2 className="text-xl font-semibold">Workout export</h2>
-            <pre className="whitespace-pre-wrap text-sm font-mono">{exportText}</pre>
-          </div>
-        </div>
-        <style>{`
-          #export-print-area { display: none !important; }
-          @media print {
-            body * { visibility: hidden !important; }
-            #export-print-area { display: block !important; visibility: visible !important; position: absolute; top: 0; left: 0; width: 100%; }
-            #export-print-area * { visibility: visible !important; }
-          }
-        `}</style>
-      </div>
-
       {/* Exercise blocks */}
       {blocks.map((block, bi) => {
         const ex = exercises.find((e) => e.id === block.exercise_id);
@@ -504,6 +457,78 @@ export default function LogPage() {
       >
         {saved ? "Saved!" : loading ? "Saving workout…" : "Save workout"}
       </button>
+
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 flex-1">
+            <div>
+              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">Start date</label>
+              <input
+                className="input"
+                type="date"
+                value={exportStartDate}
+                onChange={(e) => setExportStartDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">End date</label>
+              <input
+                className="input"
+                type="date"
+                value={exportEndDate}
+                onChange={(e) => setExportEndDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button onClick={generateExportText} className="btn btn-secondary">
+              Generate export
+            </button>
+            <button onClick={handleCopyExport} className="btn btn-ghost">
+              Copy text
+            </button>
+            <button onClick={handlePrintExport} className="btn btn-ghost">
+              Print / PDF
+            </button>
+          </div>
+        </div>
+
+        {exportError && (
+          <div className="card-sm p-3 border-red-500/20 bg-red-500/8 text-red-400 text-sm">
+            {exportError}
+          </div>
+        )}
+
+        {exportText && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-zinc-300">Export text ready{exportStatus === "copied" ? " — copied!" : ""}.</p>
+              <p className="text-xs text-zinc-500">Use copy or print to export.</p>
+            </div>
+            <textarea
+              className="input h-48 font-mono text-sm resize-none"
+              readOnly
+              value={exportText}
+            />
+          </div>
+        )}
+
+        <div id="export-print-area" className="hidden p-4 bg-white text-black" aria-hidden="true">
+          <div className="space-y-2">
+            <h2 className="text-xl font-semibold">Workout export</h2>
+            <pre className="whitespace-pre-wrap text-sm font-mono">{exportText}</pre>
+          </div>
+        </div>
+        <style>{`
+          #export-print-area { display: none !important; }
+          @media print {
+            body * { visibility: hidden !important; }
+            #export-print-area { display: block !important; visibility: visible !important; position: absolute; top: 0; left: 0; width: 100%; }
+            #export-print-area * { visibility: visible !important; }
+          }
+        `}</style>
+      </div>
     </div>
   );
 }

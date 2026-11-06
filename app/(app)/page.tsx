@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadData, type LocalData, type LocalExercise } from "@/lib/local-store";
+import { loadData, type LocalData, type LocalExercise, type LocalSet } from "@/lib/local-store";
 import {
   calculateE1RM,
   getEffectiveWeight,
@@ -10,13 +10,24 @@ import {
   getPBInfo,
   getMuscleFreshness,
   getExerciseTrend,
-  getProgressionSuggestion,
   getAgeUrgency,
   getDaysSinceDate,
   formatKg,
   formatDaysAgo,
+  toDateKey,
 } from "@/lib/calculations";
-import type { SetWithE1RM, WorkoutTopSet } from "@/lib/calculations";
+import type { SetWithE1RM } from "@/lib/calculations";
+import {
+  formatLoad,
+  formatPlannedSet,
+  getLastSessionReference,
+  getTopSetFeedback,
+  planExercise,
+  type ExercisePlan,
+  type HistorySet,
+  type PlannedSet,
+  type TopSetFeedback,
+} from "@/lib/progression";
 import type { MuscleGroup } from "@/types";
 import { ALL_MUSCLES, MUSCLE_LABELS } from "@/types";
 import MuscleCard from "@/components/dashboard/MuscleCard";
@@ -25,18 +36,14 @@ import TrendBadge from "@/components/ui/TrendBadge";
 type WorkoutMode = "Full Body" | "Pierna" | "Pull" | "Push";
 type ExerciseGoal = "PB attempt" | "Volume" | "Recovery" | "Balanced";
 
-type ExercisePrescription = {
-  sets: number;
-  reps: string;
-  weightKg: number | null;
-  note: string;
-};
+type Comeback = { factor: number; banner: string; note: string } | null;
 
-type ExerciseTrainingSet = {
-  weightKg: number | null;
-  reps: number;
-  date: string;
-  e1rm: number;
+type SessionItem = {
+  recommendation: ExerciseRecommendation;
+  doneSets: LocalSet[];
+  nextSet: PlannedSet | null;
+  coveredBy: LocalExercise | null;
+  feedback: TopSetFeedback | null;
 };
 
 type ExerciseRecommendation = {
@@ -50,7 +57,7 @@ type ExerciseRecommendation = {
   pattern: string;
   score: number;
   reason: string;
-  prescription: ExercisePrescription;
+  plan: ExercisePlan;
 };
 
 type WorkoutRecommendation = {
@@ -94,8 +101,8 @@ export default function DashboardPage() {
   today.setHours(0, 0, 0, 0);
   const frequencyCutoff = new Date(today);
   frequencyCutoff.setDate(frequencyCutoff.getDate() - (frequencyWindowDays - 1));
-  const todayKey = formatDateKey(today);
-  const cutoffKey = formatDateKey(frequencyCutoff);
+  const todayKey = toDateKey(today);
+  const cutoffKey = toDateKey(frequencyCutoff);
   const workoutDaysLast30 = new Set(
     data.workouts
       .filter((workout) => workout.date >= cutoffKey && workout.date <= todayKey)
@@ -113,26 +120,13 @@ export default function DashboardPage() {
         ? `${frequencyDelta} days ahead`
         : `${Math.abs(frequencyDelta)} days behind`;
 
-  const exerciseSetMap: Record<string, SetWithE1RM[]> = {};
-  const exerciseTrainingSetMap: Record<string, ExerciseTrainingSet[]> = {};
+  // Today's sets never feed the recommendation: the plan is built from history
+  // before today and stays fixed while the session is logged set by set.
+  const isHistoryDate = (date: string) => date < todayKey;
+  const allMaps = buildExerciseSetMaps(data, bw, () => true);
+  const historyMaps = buildExerciseSetMaps(data, bw, isHistoryDate);
+  const exerciseSetMap = allMaps.exerciseSetMap;
   const exerciseInfoMap = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
-
-  for (const set of data.sets) {
-    const exercise = exerciseInfoMap[set.exercise_id];
-    const workout = workoutById[set.workout_id];
-    if (!exercise || !workout) continue;
-    const eff = getEffectiveWeight(set.weight_kg, exercise.is_bodyweight, bw);
-    const e1rm = calculateE1RM(eff, set.reps);
-    if (!exerciseSetMap[exercise.id]) exerciseSetMap[exercise.id] = [];
-    exerciseSetMap[exercise.id].push({ e1rm, date: workout.date });
-    if (!exerciseTrainingSetMap[exercise.id]) exerciseTrainingSetMap[exercise.id] = [];
-    exerciseTrainingSetMap[exercise.id].push({
-      weightKg: set.weight_kg,
-      reps: set.reps,
-      date: workout.date,
-      e1rm,
-    });
-  }
 
   const muscleMap: Record<string, MuscleGroup[]> = {};
   const muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>> = {};
@@ -147,6 +141,7 @@ export default function DashboardPage() {
   }
 
   const muscleLastTrained: Record<string, string> = {};
+  const historyMuscleLastTrained: Record<string, string> = {};
   for (const set of data.sets) {
     const workout = workoutById[set.workout_id];
     if (!workout) continue;
@@ -155,26 +150,58 @@ export default function DashboardPage() {
       if (!muscleLastTrained[muscle] || workout.date > muscleLastTrained[muscle]) {
         muscleLastTrained[muscle] = workout.date;
       }
+      if (isHistoryDate(workout.date) && (!historyMuscleLastTrained[muscle] || workout.date > historyMuscleLastTrained[muscle])) {
+        historyMuscleLastTrained[muscle] = workout.date;
+      }
     }
   }
 
   const muscleFreshness = ALL_MUSCLES.map((m: MuscleGroup) =>
     getMuscleFreshness(m, muscleLastTrained[m] ?? null, thresholds)
   );
+  const historyMuscleFreshness = ALL_MUSCLES.map((m: MuscleGroup) =>
+    getMuscleFreshness(m, historyMuscleLastTrained[m] ?? null, thresholds)
+  );
+
+  const lastHistoryDate = data.workouts
+    .map((w) => w.date)
+    .filter(isHistoryDate)
+    .sort()
+    .at(-1) ?? null;
+  const daysSinceHistory = getDaysSinceDate(lastHistoryDate);
+  const comeback = getComebackLoad(daysSinceHistory);
 
   const workoutRecommendations = getWorkoutRecommendations({
     data,
-    exerciseSetMap,
-    exerciseTrainingSetMap,
+    exerciseSetMap: historyMaps.exerciseSetMap,
+    exerciseTrainingSetMap: historyMaps.exerciseTrainingSetMap,
     muscleContributionMap,
-    muscleFreshness,
+    muscleFreshness: historyMuscleFreshness,
     windowDays,
     topN,
+    comeback,
   });
+
+  const todaySetsByExercise: Record<string, LocalSet[]> = {};
+  for (const set of [...data.sets].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    if (workoutById[set.workout_id]?.date !== todayKey || !exerciseInfoMap[set.exercise_id]) continue;
+    if (!todaySetsByExercise[set.exercise_id]) todaySetsByExercise[set.exercise_id] = [];
+    todaySetsByExercise[set.exercise_id].push(set);
+  }
+  const todayExerciseIds = Object.keys(todaySetsByExercise);
+
   const autoWorkout = workoutRecommendations[0] ?? null;
+  const todayMode = inferTodayMode(todayExerciseIds, muscleContributionMap);
   const activeWorkout =
-    workoutRecommendations.find((item) => item.mode === (selectedWorkoutMode ?? autoWorkout?.mode)) ??
+    workoutRecommendations.find((item) => item.mode === (selectedWorkoutMode ?? todayMode ?? autoWorkout?.mode)) ??
     autoWorkout;
+  const sessionItems = activeWorkout
+    ? getSessionItems(activeWorkout, todaySetsByExercise, exerciseInfoMap, muscleContributionMap, historyMaps.exerciseTrainingSetMap)
+    : [];
+  const plannedIds = new Set(sessionItems.map((item) => item.recommendation.exercise.id));
+  const extraTodayExercises = todayExerciseIds
+    .filter((id) => !plannedIds.has(id))
+    .map((id) => ({ exercise: exerciseInfoMap[id], sets: todaySetsByExercise[id] }));
 
   const exercisesWithSets = data.exercises.filter((e) => (exerciseSetMap[e.id] ?? []).length > 0);
   const exerciseLevels = exercisesWithSets.map((exercise) => {
@@ -190,31 +217,22 @@ export default function DashboardPage() {
 
   const progressionAlerts: Array<{ name: string; message: string }> = [];
   for (const exercise of exercisesWithSets) {
-    const byDate: Record<string, WorkoutTopSet[]> = {};
-    for (const set of data.sets.filter((s) => s.exercise_id === exercise.id)) {
-      const date = workoutById[set.workout_id]?.date ?? "";
-      if (!date) continue;
-      if (!byDate[date]) byDate[date] = [];
-      byDate[date].push({ weight: set.weight_kg ?? 0, reps: set.reps, date });
-    }
-
-    const topSets = Object.values(byDate)
-      .map((daySets) =>
-        daySets.reduce((best, cur) => {
-          const bEff = getEffectiveWeight(best.weight, exercise.is_bodyweight, bw);
-          const cEff = getEffectiveWeight(cur.weight, exercise.is_bodyweight, bw);
-          return calculateE1RM(cEff, cur.reps) > calculateE1RM(bEff, best.reps) ? cur : best;
-        })
-      )
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    const suggestion = getProgressionSuggestion(topSets, { isBodyweight: exercise.is_bodyweight });
-    if (suggestion?.suggest) {
+    const history = allMaps.exerciseTrainingSetMap[exercise.id] ?? [];
+    const reference = getLastSessionReference(history);
+    const entries = muscleContributionMap[exercise.id] ?? [];
+    const primary = [...entries].sort((a, b) => b.contribution - a.contribution)[0]?.muscle ?? null;
+    const plan = planExercise({
+      exercise,
+      history,
+      isAccessory: isAccessoryPattern(getExercisePattern(exercise, entries, primary)),
+    });
+    // Only recent lifts: after months away, an old "go up" would be wrong.
+    if (!reference || reference.weightKg === null || plan.topWeightKg === null) continue;
+    if ((getDaysSinceDate(reference.date) ?? Infinity) > 42) continue;
+    if (plan.topWeightKg > reference.weightKg && !(exercise.is_bodyweight && reference.weightKg <= 0)) {
       progressionAlerts.push({
         name: exercise.name,
-        message: suggestion.suggestedWeight && suggestion.suggestedWeight > 0
-          ? `Has repetido una marca estable varias sesiones. Próxima vez prueba subir a ${suggestion.suggestedWeight} kg si la técnica se mantiene limpia.`
-          : "Has repetido una marca estable varias sesiones. Próxima vez prueba añadir reps, tempo o un poco de lastre si la técnica se mantiene limpia.",
+        message: `Último ${formatLoad(reference.weightKg)} kg × ${reference.reps}: la próxima vez sube a ${formatLoad(plan.topWeightKg)} kg.`,
       });
     }
   }
@@ -289,7 +307,9 @@ export default function DashboardPage() {
           <div className="card p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Recommended</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                  {todayExerciseIds.length > 0 ? "Hoy" : "Recommended"}
+                </p>
                 <h2 className="text-2xl font-semibold text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
               </div>
               <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${activeWorkout.badgeClass}`}>
@@ -300,7 +320,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-4 gap-1.5">
               {WORKOUT_MODES.map((mode) => {
                 const isActive = activeWorkout.mode === mode;
-                const isAuto = autoWorkout?.mode === mode;
+                const isAuto = (todayMode ?? autoWorkout?.mode) === mode;
                 return (
                   <button
                     key={mode}
@@ -313,14 +333,21 @@ export default function DashboardPage() {
                     }`}
                   >
                     <span className="block truncate">{mode}</span>
-                    {isAuto && <span className="block text-[10px] opacity-70">auto</span>}
+                    {isAuto && <span className="block text-[10px] opacity-70">{todayMode ? "hoy" : "auto"}</span>}
                   </button>
                 );
               })}
             </div>
 
+            {comeback && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                {comeback.banner}
+              </p>
+            )}
             <p className="text-sm text-zinc-500">
-              Esta sesión prioriza músculos con más tiempo sin estímulo y ejercicios con marcas más tiempo estancadas, manteniendo una selección equilibrada.
+              {todayExerciseIds.length > 0
+                ? "Plan de hoy fijado. Lo que registras va marcando ejercicios, no cambia el plan."
+                : "Prioriza músculos con más tiempo sin estímulo. Calienta subiendo peso y deja la última serie para apretar."}
             </p>
             <div className="grid grid-cols-1 gap-2">
               {activeWorkout.muscles.map((mf) => (
@@ -329,37 +356,86 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-2 pt-1">
-              {activeWorkout.exercises.map((item, index) => (
-                <Link
-                  key={item.exercise.id}
-                  href={`/exercises/${item.exercise.id}`}
-                  className="card-sm flex items-start justify-between gap-3 p-3 transition-colors hover:bg-zinc-800/50"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md bg-white text-xs font-semibold text-zinc-500 border border-zinc-800/50">
-                        {index + 1}
+              {sessionItems.map(({ recommendation: item, doneSets, nextSet, coveredBy, feedback }, index) => {
+                const isDone = coveredBy !== null || (doneSets.length > 0 && nextSet === null);
+                return (
+                  <div
+                    key={item.exercise.id}
+                    className={`card-sm p-3 space-y-2 ${isDone ? "opacity-70" : ""}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-xs font-semibold ${
+                              isDone ? "border-green-200 bg-green-50 text-green-700" : "border-zinc-800/50 bg-white text-zinc-500"
+                            }`}
+                          >
+                            {isDone ? "✓" : index + 1}
+                          </span>
+                          <Link href={`/exercises/${item.exercise.id}`} className="font-semibold text-zinc-200 truncate hover:underline">
+                            {item.exercise.name}
+                          </Link>
+                        </div>
+                        <p className="mt-1 text-sm text-zinc-700 font-mono">
+                          {item.plan.sets.map((set, setIndex) => (
+                            <span key={setIndex}>
+                              {setIndex > 0 && <span className="text-zinc-500"> → </span>}
+                              <span className={set.kind === "top" ? "font-bold" : ""}>{formatPlannedSet(set)}</span>
+                            </span>
+                          ))}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">{item.plan.note}</p>
+                      </div>
+                      <span className={`flex-shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${goalChipClass(item.goal)}`}>
+                        {item.goal}
                       </span>
-                      <p className="font-semibold text-zinc-200 truncate">{item.exercise.name}</p>
                     </div>
-                    <p className="mt-1 text-sm font-semibold text-zinc-700">
-                      {item.prescription.sets} series · {item.prescription.reps} reps ·{" "}
-                      {formatPrescriptionWeight(item.exercise, item.prescription.weightKg)}
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-500">{item.reason}</p>
-                    <p className="mt-1 text-[10px] text-zinc-600">{item.prescription.note}</p>
+
+                    {doneSets.length > 0 && (
+                      <p className="text-xs text-zinc-600">
+                        <span className="font-semibold">Hoy:</span> <span className="font-mono">{doneSets.map(formatDoneSet).join(" · ")}</span>
+                      </p>
+                    )}
+                    {feedback && (
+                      <p
+                        className={`text-xs font-semibold ${
+                          feedback.tone === "up" ? "text-green-700" : feedback.tone === "down" ? "text-orange-700" : "text-zinc-600"
+                        }`}
+                      >
+                        {feedback.message}
+                      </p>
+                    )}
+                    {coveredBy && <p className="text-xs font-semibold text-green-700">Cubierto con {coveredBy.name}.</p>}
+
+                    {nextSet ? (
+                      <Link href={logSetHref(item.exercise, nextSet)} className="btn btn-primary w-full text-sm">
+                        Registrar {doneSets.length > 0 ? "siguiente: " : ""}
+                        {formatPlannedSet(nextSet)}
+                      </Link>
+                    ) : (
+                      !coveredBy && (
+                        <Link href={`/log?exercise=${item.exercise.id}`} className="btn btn-ghost w-full text-sm">
+                          Añadir otra serie
+                        </Link>
+                      )
+                    )}
                   </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${goalChipClass(item.goal)}`}>
-                      {item.goal}
-                    </span>
-                    <span className="text-[10px] text-zinc-600">
-                      {item.pattern}
-                    </span>
-                  </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
+
+            {extraTodayExercises.length > 0 && (
+              <div className="space-y-1 pt-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">También hoy</p>
+                {extraTodayExercises.map(({ exercise, sets }) => (
+                  <p key={exercise.id} className="text-xs text-zinc-600">
+                    <span className="font-semibold">{exercise.name}:</span>{" "}
+                    <span className="font-mono">{sets.map(formatDoneSet).join(" · ")}</span>
+                  </p>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -406,13 +482,6 @@ export default function DashboardPage() {
       )}
     </div>
   );
-}
-
-function formatDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 const WORKOUT_MODES: WorkoutMode[] = ["Full Body", "Pierna", "Pull", "Push"];
@@ -462,14 +531,16 @@ function getWorkoutRecommendations({
   muscleFreshness,
   windowDays,
   topN,
+  comeback,
 }: {
   data: LocalData;
   exerciseSetMap: Record<string, SetWithE1RM[]>;
-  exerciseTrainingSetMap: Record<string, ExerciseTrainingSet[]>;
+  exerciseTrainingSetMap: Record<string, HistorySet[]>;
   muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>;
   muscleFreshness: ReturnType<typeof getMuscleFreshness>[];
   windowDays: number;
   topN: number;
+  comeback: Comeback;
 }): WorkoutRecommendation[] {
   const byMuscle: Record<MuscleGroup, ReturnType<typeof getMuscleFreshness>> = Object.fromEntries(
     muscleFreshness.map((m) => [m.muscle, m])
@@ -502,6 +573,7 @@ function getWorkoutRecommendations({
           byMuscle,
           windowDays,
           topN,
+          comeback,
         })
       )
       .filter((item): item is ExerciseRecommendation => Boolean(item))
@@ -535,16 +607,18 @@ function scoreExerciseForWorkout({
   byMuscle,
   windowDays,
   topN,
+  comeback,
 }: {
   exercise: LocalExercise;
   muscles: Array<{ muscle: MuscleGroup; contribution: number }>;
   exerciseSets: SetWithE1RM[];
-  trainingSets: ExerciseTrainingSet[];
+  trainingSets: HistorySet[];
   lastTrained: string | null;
   targetMuscles: MuscleGroup[];
   byMuscle: Record<string, ReturnType<typeof getMuscleFreshness>>;
   windowDays: number;
   topN: number;
+  comeback: Comeback;
 }): ExerciseRecommendation | null {
   const targetEntries = muscles.filter((entry) => targetMuscles.includes(entry.muscle));
   if (targetEntries.length === 0) return null;
@@ -572,7 +646,17 @@ function scoreExerciseForWorkout({
   const primaryMuscleDays = primaryMuscle ? byMuscle[primaryMuscle]?.daysSince ?? null : null;
   const goal = getExerciseGoal(pb?.daysSince ?? null, trend, primaryMuscleDays, recoveryPenalty);
   const pattern = getExercisePattern(exercise, targetEntries, primaryMuscle);
-  const prescription = getExercisePrescription(exercise, trainingSets, goal, pattern);
+  // A muscle hit in the last two days gets a lighter day; a long break gets
+  // the comeback load. Whichever is lighter wins.
+  const recoveryFactor = goal === "Recovery" ? 0.9 : 1;
+  const useComeback = comeback !== null && comeback.factor <= recoveryFactor;
+  const plan = planExercise({
+    exercise,
+    history: trainingSets,
+    isAccessory: isAccessoryPattern(pattern),
+    loadFactor: useComeback ? comeback.factor : recoveryFactor,
+    loadFactorNote: useComeback ? comeback.note : recoveryFactor < 1 ? "Músculo reciente: día de mantener." : undefined,
+  });
 
   return {
     exercise,
@@ -585,12 +669,13 @@ function scoreExerciseForWorkout({
     pattern,
     score,
     reason: getExerciseReason(primaryMuscle, primaryMuscleDays, pb?.daysSince ?? null, trend, goal),
-    prescription,
+    plan,
   };
 }
 
 function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[]) {
-  const limit = mode === "Full Body" ? 6 : 5;
+  // Real sessions run about four exercises; a longer list just goes unfinished.
+  const limit = mode === "Full Body" ? 5 : 4;
   const selected: ExerciseRecommendation[] = [];
 
   for (const pattern of PATTERN_TARGETS[mode]) {
@@ -631,7 +716,7 @@ function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendati
     }
   }
 
-  return selected.slice(0, 7);
+  return selected.slice(0, limit);
 }
 
 function matchesWorkoutPattern(mode: WorkoutMode, exercisePattern: string, targetPattern: string) {
@@ -777,23 +862,102 @@ function getExerciseReason(
   return `${muscleText} · ${pbText} · ${trendText} · ${goal}`;
 }
 
-function getExercisePrescription(
-  exercise: LocalExercise,
-  trainingSets: ExerciseTrainingSet[],
-  goal: ExerciseGoal,
-  pattern: string
-): ExercisePrescription {
-  const topSets = getWorkoutTopTrainingSets(trainingSets);
-  const lastTopSet = topSets.at(-1) ?? null;
-  const progression = getProgressionSuggestion(
-    topSets.map((set) => ({
-      weight: set.weightKg ?? 0,
+function buildExerciseSetMaps(data: LocalData, bodyweightKg: number, includeDate: (date: string) => boolean) {
+  const workoutById = Object.fromEntries(data.workouts.map((w) => [w.id, w]));
+  const exerciseById = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
+  const exerciseSetMap: Record<string, SetWithE1RM[]> = {};
+  const exerciseTrainingSetMap: Record<string, HistorySet[]> = {};
+
+  for (const set of data.sets) {
+    const exercise = exerciseById[set.exercise_id];
+    const workout = workoutById[set.workout_id];
+    if (!exercise || !workout || !includeDate(workout.date)) continue;
+    const e1rm = calculateE1RM(getEffectiveWeight(set.weight_kg, exercise.is_bodyweight, bodyweightKg), set.reps);
+    (exerciseSetMap[exercise.id] ??= []).push({ e1rm, date: workout.date });
+    (exerciseTrainingSetMap[exercise.id] ??= []).push({
+      weightKg: set.weight_kg,
       reps: set.reps,
-      date: set.date,
-    })),
-    { isBodyweight: exercise.is_bodyweight }
-  );
-  const isAccessory = [
+      date: workout.date,
+      e1rm,
+      notes: set.notes,
+    });
+  }
+
+  return { exerciseSetMap, exerciseTrainingSetMap };
+}
+
+function getComebackLoad(daysSinceLastWorkout: number | null): Comeback {
+  if (daysSinceLastWorkout === null || daysSinceLastWorkout <= 14) return null;
+  const factor = daysSinceLastWorkout > 28 ? 0.85 : 0.9;
+  return {
+    factor,
+    banner: `Vuelta tras ${daysSinceLastWorkout} días: cargas al ~${Math.round(factor * 100)}% para recuperar sensaciones.`,
+    note: `Hoy al ${Math.round(factor * 100)}%.`,
+  };
+}
+
+// Once something is logged today, the session type follows it instead of
+// flipping to whatever the freshness score would pick next.
+function inferTodayMode(
+  todayExerciseIds: string[],
+  muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>
+): WorkoutMode | null {
+  const blocks = new Set<keyof typeof TRAINING_BLOCKS>();
+  for (const id of todayExerciseIds) {
+    const primary = [...(muscleContributionMap[id] ?? [])].sort((a, b) => b.contribution - a.contribution)[0]?.muscle;
+    const block = (Object.keys(TRAINING_BLOCKS) as Array<keyof typeof TRAINING_BLOCKS>).find((key) =>
+      primary ? TRAINING_BLOCKS[key].includes(primary) : false
+    );
+    if (block) blocks.add(block);
+  }
+  if (blocks.size === 0) return null;
+  if (blocks.size > 1) return "Full Body";
+  const [block] = Array.from(blocks);
+  return block === "legs" ? "Pierna" : block === "push" ? "Push" : "Pull";
+}
+
+function getSessionItems(
+  workout: WorkoutRecommendation,
+  todaySetsByExercise: Record<string, LocalSet[]>,
+  exerciseById: Record<string, LocalExercise>,
+  muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>,
+  historyByExercise: Record<string, HistorySet[]>
+): SessionItem[] {
+  const plannedIds = new Set(workout.exercises.map((item) => item.exercise.id));
+  const targets = WORKOUT_TARGETS[workout.mode];
+  // An off-plan exercise done today covers a planned one with the same
+  // movement pattern, e.g. a different row instead of the dumbbell row.
+  const offPlanPatterns = Object.keys(todaySetsByExercise)
+    .filter((id) => !plannedIds.has(id) && exerciseById[id])
+    .map((id) => {
+      const entries = (muscleContributionMap[id] ?? []).filter((entry) => targets.includes(entry.muscle));
+      const primary = [...entries].sort((a, b) => b.contribution - a.contribution)[0]?.muscle ?? null;
+      return { exercise: exerciseById[id], pattern: getExercisePattern(exerciseById[id], entries, primary) };
+    });
+
+  return workout.exercises.map((recommendation) => {
+    const doneSets = todaySetsByExercise[recommendation.exercise.id] ?? [];
+    const coveredBy =
+      doneSets.length === 0
+        ? offPlanPatterns.find((item) => item.pattern === recommendation.pattern)?.exercise ?? null
+        : null;
+    return {
+      recommendation,
+      doneSets,
+      nextSet: coveredBy ? null : recommendation.plan.sets[doneSets.length] ?? null,
+      coveredBy,
+      feedback: getTopSetFeedback(
+        recommendation.plan,
+        doneSets.map((set) => ({ weightKg: set.weight_kg, reps: set.reps })),
+        recommendation.exercise,
+        historyByExercise[recommendation.exercise.id] ?? []
+      ),
+    };
+  });
+}
+
+function isAccessoryPattern(pattern: string) {
+  return [
     "accessory",
     "biceps",
     "triceps",
@@ -804,95 +968,16 @@ function getExercisePrescription(
     "hamstring curl",
     "glute accessory",
   ].includes(pattern);
-  const defaultSets = isAccessory ? 3 : 4;
-
-  if (!lastTopSet) {
-    return {
-      sets: defaultSets,
-      reps: isAccessory ? "10-15" : "8-10",
-      weightKg: null,
-      note: "Sin historial: empieza suave y deja 2-3 reps en recámara.",
-    };
-  }
-
-  const progressedWeight =
-    progression?.suggestedWeight !== null && progression?.suggestedWeight !== undefined && progression.suggestedWeight > 0
-      ? progression.suggestedWeight
-      : null;
-  const baseWeight = progressedWeight ?? lastTopSet.weightKg;
-  const reducedWeight = getRecoveryWeight(exercise, baseWeight);
-
-  if (goal === "Recovery") {
-    return {
-      sets: Math.max(2, defaultSets - 1),
-      reps: isAccessory ? "12-15" : "8-12",
-      weightKg: reducedWeight,
-      note: "Día de mantener: RPE 6-7, técnica limpia.",
-    };
-  }
-
-  if (goal === "PB attempt") {
-    const targetReps = progressedWeight ? getRepRange(lastTopSet.reps - 2, lastTopSet.reps) : getRepRange(lastTopSet.reps - 1, lastTopSet.reps + 1);
-    return {
-      sets: defaultSets,
-      reps: targetReps,
-      weightKg: baseWeight,
-      note: progressedWeight ? "Subida sugerida por progresión reciente." : "Aprieta solo si el calentamiento se mueve bien.",
-    };
-  }
-
-  if (goal === "Volume") {
-    return {
-      sets: defaultSets,
-      reps: isAccessory ? "12-15" : "8-12",
-      weightKg: baseWeight,
-      note: "Busca volumen sólido con 1-2 reps en recámara.",
-    };
-  }
-
-  return {
-    sets: defaultSets,
-    reps: isAccessory ? getRepRange(lastTopSet.reps, lastTopSet.reps + 3) : getRepRange(lastTopSet.reps - 1, lastTopSet.reps + 2),
-    weightKg: baseWeight,
-    note: "Mantén el peso si va justo; sube solo si las reps salen limpias.",
-  };
 }
 
-function getWorkoutTopTrainingSets(trainingSets: ExerciseTrainingSet[]) {
-  const byDate: Record<string, ExerciseTrainingSet[]> = {};
-
-  for (const set of trainingSets) {
-    if (!byDate[set.date]) byDate[set.date] = [];
-    byDate[set.date].push(set);
-  }
-
-  return Object.values(byDate)
-    .map((daySets) => daySets.reduce((best, cur) => (cur.e1rm > best.e1rm ? cur : best)))
-    .sort((a, b) => a.date.localeCompare(b.date));
+function logSetHref(exercise: LocalExercise, set: PlannedSet) {
+  const params = new URLSearchParams({ exercise: exercise.id, reps: set.reps.replace(/\D.*$/, "") });
+  if (set.weightKg !== null) params.set("weight", String(set.weightKg));
+  return `/log?${params.toString()}`;
 }
 
-function getRepRange(min: number, max: number) {
-  const safeMin = Math.max(1, Math.round(min));
-  const safeMax = Math.max(safeMin, Math.round(max));
-  return safeMin === safeMax ? `${safeMin}` : `${safeMin}-${safeMax}`;
-}
-
-function roundToNearestIncrement(value: number, increment = 2.5) {
-  return Math.round(value / increment) * increment;
-}
-
-function getRecoveryWeight(exercise: LocalExercise, weightKg: number | null) {
-  if (weightKg === null) return null;
-  if (!exercise.is_bodyweight || weightKg >= 0) return roundToNearestIncrement(weightKg * 0.9);
-  return roundToNearestIncrement(weightKg * 1.1);
-}
-
-function formatPrescriptionWeight(exercise: LocalExercise, weightKg: number | null) {
-  if (weightKg === null) return exercise.is_bodyweight ? "BW" : "Carga libre";
-  if (!exercise.is_bodyweight) return formatKg(weightKg);
-  if (weightKg === 0) return "BW";
-  if (weightKg > 0) return `BW + ${formatKg(weightKg)}`;
-  return `BW - ${formatKg(Math.abs(weightKg))}`;
+function formatDoneSet(set: LocalSet) {
+  return `${set.weight_kg === null || set.weight_kg === 0 ? "BW" : formatLoad(set.weight_kg)}×${set.reps}`;
 }
 
 function goalChipClass(goal: ExerciseGoal) {
