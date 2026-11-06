@@ -9,11 +9,12 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        barlow: ["Barlow", "system-ui", "sans-serif"],
-        condensed: ["Barlow Condensed", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "monospace"],
+        barlow: ["Plus Jakarta Sans", "system-ui", "sans-serif"],
+        condensed: ["Plus Jakarta Sans", "system-ui", "sans-serif"],
+        mono: ["Plus Jakarta Sans", "system-ui", "sans-serif"],
       },
       colors: {
+        accent: "var(--color-accent)",
         brand: {
           50: "#f0f9ff",
           100: "#e0f2fe",

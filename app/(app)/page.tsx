@@ -93,9 +93,6 @@ export default function DashboardPage() {
   const workoutById = Object.fromEntries(data.workouts.map((w) => [w.id, w]));
   const workoutDates = data.workouts.map((w) => w.date);
   const lastWorkoutDate = workoutDates.length > 0 ? [...workoutDates].sort().reverse()[0] : null;
-  const lastWorkoutDays = lastWorkoutDate
-    ? Math.floor((Date.now() - new Date(lastWorkoutDate).getTime()) / 86400000)
-    : null;
   const frequencyWindowDays = 30;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -115,10 +112,10 @@ export default function DashboardPage() {
   const frequencyDelta = Math.round(workoutDaysLast30 - targetDaysLast30);
   const frequencyStatus =
     Math.abs(frequencyDelta) <= 1
-      ? "On pace"
+      ? "Vas al ritmo de tu objetivo"
       : frequencyDelta > 1
-        ? `${frequencyDelta} days ahead`
-        : `${Math.abs(frequencyDelta)} days behind`;
+        ? `${frequencyDelta} días por encima del objetivo`
+        : `${Math.abs(frequencyDelta)} días por debajo del objetivo`;
 
   // Today's sets never feed the recommendation: the plan is built from history
   // before today and stays fixed while the session is logged set by set.
@@ -239,81 +236,37 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-semibold tracking-widest uppercase text-zinc-500 mb-0.5" style={{ fontFamily: "Barlow Condensed, sans-serif" }}>
-            {lastWorkoutDate ? `Last trained: ${formatDaysAgo(lastWorkoutDays)}` : "No workouts yet"}
-          </p>
+      <header className="-mx-4 -mt-6 rounded-b-[32px] bg-accent px-5 pb-6 pt-7 text-white">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <GymAtlasLogo />
-            <h1 style={{ fontFamily: "Barlow Condensed, sans-serif", fontWeight: 800 }} className="text-4xl tracking-wide text-zinc-100">
-              GymATLAS
-            </h1>
-          </div>
-        </div>
-        <Link href="/log" className="btn btn-primary text-sm px-4 py-2">+ Log</Link>
-      </div>
-
-      <section>
-        <p className="section-label">Training Frequency</p>
-        <div className="card p-4 space-y-4">
-          <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Last 30 days</p>
-              <p className="text-3xl font-semibold text-zinc-100 mt-1">{workoutDaysLast30}</p>
-              <p className="text-xs text-zinc-500 mt-0.5">workout days</p>
-            </div>
-            <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
-              frequencyDelta < -1
-                ? "bg-orange-50 text-orange-700 border-orange-200"
-                : "bg-green-50 text-green-700 border-green-200"
-            }`}>
-              {frequencyStatus}
-            </span>
-          </div>
-
-          <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-blue-500"
-              style={{ width: `${frequencyProgress}%` }}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600">Avg / week</p>
-              <p className="font-mono text-zinc-300 mt-0.5">{weeklyAverage.toFixed(1)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-zinc-600">Target / week</p>
-              <p className="font-mono text-zinc-300 mt-0.5">{weeklyTarget}</p>
+              <h1 className="text-2xl font-extrabold tracking-tight leading-none">GymATLAS</h1>
+              <p className="mt-1 text-xs font-medium text-white/75">
+                {lastWorkoutDate ? `Último entreno: ${formatDaysAgoEs(getDaysSinceDate(lastWorkoutDate))}` : "Aún no hay entrenos"}
+              </p>
             </div>
           </div>
+          <Link href="/log" className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-accent shadow-sm">
+            + Log
+          </Link>
         </div>
-      </section>
-
-      <section>
-        <p className="section-label">Muscle Freshness</p>
-        <div className="grid grid-cols-2 gap-2">
-          {muscleFreshness.map((mf) => (
-            <MuscleCard key={mf.muscle} freshness={mf} href={`/exercises?muscle=${mf.muscle}`} />
-          ))}
-        </div>
-      </section>
+        <WeekStrip today={today} trainedDates={new Set(workoutDates)} />
+      </header>
 
       {activeWorkout && (
         <section>
-          <p className="section-label">Recommended Workout</p>
+          <p className="section-label">{todayExerciseIds.length > 0 ? "Entreno de hoy" : "Entreno recomendado"}</p>
           <div className="card p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
                   {todayExerciseIds.length > 0 ? "Hoy" : "Recommended"}
                 </p>
-                <h2 className="text-2xl font-semibold text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
+                <h2 className="text-2xl font-extrabold tracking-tight text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
               </div>
-              <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${activeWorkout.badgeClass}`}>
-                {Math.round(activeWorkout.score)}d avg
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${activeWorkout.badgeClass}`}>
+                {Math.round(activeWorkout.score)} días sin tocar
               </span>
             </div>
 
@@ -326,10 +279,8 @@ export default function DashboardPage() {
                     key={mode}
                     type="button"
                     onClick={() => setSelectedWorkoutMode(mode)}
-                    className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-colors ${
-                      isActive
-                        ? "border-blue-500 bg-blue-50 text-blue-700"
-                        : "border-zinc-800/50 bg-zinc-800/30 text-zinc-500 hover:bg-zinc-800/50 hover:text-zinc-300"
+                    className={`rounded-xl px-2 py-2 text-xs font-bold transition-colors ${
+                      isActive ? "bg-accent text-white" : "bg-white text-zinc-500 hover:text-zinc-300"
                     }`}
                   >
                     <span className="block truncate">{mode}</span>
@@ -411,7 +362,7 @@ export default function DashboardPage() {
                     {nextSet ? (
                       <Link href={logSetHref(item.exercise, nextSet)} className="btn btn-primary w-full text-sm">
                         Registrar {doneSets.length > 0 ? "siguiente: " : ""}
-                        {formatPlannedSet(nextSet)}
+                        {formatPlannedSet(nextSet)} <span aria-hidden="true">→</span>
                       </Link>
                     ) : (
                       !coveredBy && (
@@ -440,9 +391,45 @@ export default function DashboardPage() {
         </section>
       )}
 
+      <section>
+        <p className="section-label">Frecuencia</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="card flex flex-col items-center gap-3 p-4">
+            <p className="self-start text-sm font-semibold text-zinc-200">Últimos 30 días</p>
+            <ProgressRing value={frequencyProgress / 100}>
+              <span className="text-2xl font-extrabold text-zinc-100 leading-none">{workoutDaysLast30}</span>
+              <span className="mt-1 text-[11px] text-zinc-500">de {Math.round(targetDaysLast30)} días</span>
+            </ProgressRing>
+          </div>
+          <div className="card flex flex-col items-center gap-3 p-4">
+            <p className="self-start text-sm font-semibold text-zinc-200">Media semanal</p>
+            <ProgressRing value={Math.min(1, weeklyAverage / weeklyTarget)}>
+              <span className="text-2xl font-extrabold text-zinc-100 leading-none">{weeklyAverage.toFixed(1)}</span>
+              <span className="mt-1 text-[11px] text-zinc-500">objetivo {weeklyTarget}</span>
+            </ProgressRing>
+          </div>
+        </div>
+        <p
+          className={`mt-2 text-center text-xs font-semibold ${
+            frequencyDelta < -1 ? "text-orange-700" : "text-green-700"
+          }`}
+        >
+          {frequencyStatus}
+        </p>
+      </section>
+
+      <section>
+        <p className="section-label">Músculos</p>
+        <div className="grid grid-cols-2 gap-2">
+          {muscleFreshness.map((mf) => (
+            <MuscleCard key={mf.muscle} freshness={mf} href={`/exercises?muscle=${mf.muscle}`} />
+          ))}
+        </div>
+      </section>
+
       {progressionAlerts.length > 0 && (
         <section>
-          <p className="section-label">Ready To Increase</p>
+          <p className="section-label">Listo para subir</p>
           <div className="space-y-2">
             {progressionAlerts.map((alert) => (
               <div key={alert.name} className="card-sm p-3">
@@ -456,7 +443,7 @@ export default function DashboardPage() {
 
       {exerciseLevels.length > 0 && (
         <section>
-          <p className="section-label">Strength Snapshot</p>
+          <p className="section-label">Fuerza</p>
           <div className="card overflow-hidden">
             {exerciseLevels.map((row, i) => (
               <Link
@@ -1011,9 +998,84 @@ function AgeChip({ days, label }: { days: number | null; label?: string }) {
   );
 }
 
+function WeekStrip({ today, trainedDates }: { today: Date; trainedDates: Set<string> }) {
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + i);
+    return day;
+  });
+  const todayKey = toDateKey(today);
+  const monthName = today.toLocaleDateString("es", { month: "long" });
+  const month = `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${today.getFullYear()}`;
+
+  return (
+    <div className="mt-6">
+      <p className="mb-3 text-center text-sm font-semibold text-white/90">{month}</p>
+      <div className="grid grid-cols-7 gap-1.5">
+        {days.map((day) => {
+          const key = toDateKey(day);
+          const trained = trainedDates.has(key);
+          const isToday = key === todayKey;
+          return (
+            <div
+              key={key}
+              className={`flex flex-col items-center gap-1 rounded-full py-2.5 ${
+                trained ? "bg-white text-accent" : "bg-white/15 text-white"
+              } ${isToday ? "ring-2 ring-white ring-offset-2 ring-offset-accent" : ""}`}
+              aria-label={`${day.toLocaleDateString("es", { weekday: "long", day: "numeric" })}${trained ? ", entrenado" : ""}`}
+            >
+              <span className="text-[11px] font-medium opacity-80">
+                {day.toLocaleDateString("es", { weekday: "narrow" })}
+              </span>
+              <span className="text-base font-bold leading-none">{day.getDate()}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function formatDaysAgoEs(days: number | null) {
+  if (days === null) return "nunca";
+  if (days === 0) return "hoy";
+  if (days === 1) return "ayer";
+  return `hace ${days} días`;
+}
+
+function ProgressRing({ value, children }: { value: number; children: React.ReactNode }) {
+  const size = 108;
+  const stroke = 10;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const clamped = Math.max(0, Math.min(1, value));
+
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e3e5ea" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="var(--color-accent)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - clamped)}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
+    </div>
+  );
+}
+
 function GymAtlasLogo() {
   return (
-    <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm">
+    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-accent shadow-sm">
       <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true" className="block">
         <circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" strokeWidth="1.6" opacity="0.9" />
         <ellipse cx="16" cy="16" rx="5.4" ry="12" fill="none" stroke="currentColor" strokeWidth="1.1" opacity="0.55" />
@@ -1022,7 +1084,7 @@ function GymAtlasLogo() {
           x="16"
           y="21.4"
           textAnchor="middle"
-          fontFamily="Barlow Condensed, system-ui, sans-serif"
+          fontFamily="Plus Jakarta Sans, system-ui, sans-serif"
           fontSize="17"
           fontWeight="800"
           fill="currentColor"

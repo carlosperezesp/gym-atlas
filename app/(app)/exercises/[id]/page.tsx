@@ -117,7 +117,7 @@ export default function ExerciseDetailPage() {
         </Link>
         <div className="flex items-start justify-between">
           <div>
-            <h1 style={{ fontFamily: "Barlow Condensed, sans-serif", fontWeight: 800 }} className="text-2xl tracking-wide">
+            <h1 style={{ fontFamily: "Plus Jakarta Sans, system-ui, sans-serif", fontWeight: 800 }} className="text-2xl tracking-wide">
               {exercise.name}
             </h1>
             <p className="text-sm text-zinc-500 mt-0.5">

@@ -88,7 +88,7 @@ export default function ExercisesPage() {
     <div className="space-y-6 animate-fade-up">
       <div className="flex items-center justify-between">
         <div>
-          <h1 style={{ fontFamily: "Barlow Condensed, sans-serif", fontWeight: 800 }} className="text-2xl tracking-wide">Exercises</h1>
+          <h1 style={{ fontFamily: "Plus Jakarta Sans, system-ui, sans-serif", fontWeight: 800 }} className="text-2xl tracking-wide">Exercises</h1>
           {selectedMuscle && (
             <p className="text-xs text-zinc-500 mt-0.5">
               Filtered by {MUSCLE_LABELS[selectedMuscle]}
