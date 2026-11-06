@@ -80,7 +80,7 @@ export default function MuscleCard({ freshness, compact = false, href }: MuscleC
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
         <span
           className="text-[10px] font-bold tracking-widest uppercase"
-          style={{ fontFamily: "Plus Jakarta Sans, system-ui, sans-serif", color: daysHex[color] }}
+          style={{ fontFamily: "var(--font-display)", color: daysHex[color] }}
         >
           {MUSCLE_SHORT[muscle]}
         </span>

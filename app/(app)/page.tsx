@@ -236,22 +236,21 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-fade-up">
-      <header className="-mx-4 -mt-6 rounded-b-[32px] bg-accent px-5 pb-6 pt-7 text-white">
+      <header className="-mx-4 -mt-6 rounded-b-[32px] bg-accent px-5 pb-7 pt-8 text-white">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <GymAtlasLogo />
             <div>
-              <h1 className="text-2xl font-extrabold tracking-tight leading-none">GymATLAS</h1>
+              <h1 className="text-3xl font-black leading-none">GymATLAS</h1>
               <p className="mt-1 text-xs font-medium text-white/75">
                 {lastWorkoutDate ? `Último entreno: ${formatDaysAgoEs(getDaysSinceDate(lastWorkoutDate))}` : "Aún no hay entrenos"}
               </p>
             </div>
           </div>
-          <Link href="/log" className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-accent shadow-sm">
+          <Link href="/log" className="font-display rounded-xl bg-white px-4 py-2 text-sm text-accent shadow-sm">
             + Log
           </Link>
         </div>
-        <WeekStrip today={today} trainedDates={new Set(workoutDates)} />
       </header>
 
       {activeWorkout && (
@@ -261,9 +260,9 @@ export default function DashboardPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
-                  {todayExerciseIds.length > 0 ? "Hoy" : "Recommended"}
+                  {todayExerciseIds.length > 0 ? "Hoy" : "Recomendado"}
                 </p>
-                <h2 className="text-2xl font-extrabold tracking-tight text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
+                <h2 className="text-3xl font-black text-zinc-200 mt-0.5">{activeWorkout.mode}</h2>
               </div>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${activeWorkout.badgeClass}`}>
                 {Math.round(activeWorkout.score)} días sin tocar
@@ -324,7 +323,7 @@ export default function DashboardPage() {
                           >
                             {isDone ? "✓" : index + 1}
                           </span>
-                          <Link href={`/exercises/${item.exercise.id}`} className="font-semibold text-zinc-200 truncate hover:underline">
+                          <Link href={`/exercises/${item.exercise.id}`} className="font-display text-base text-zinc-200 truncate hover:underline">
                             {item.exercise.name}
                           </Link>
                         </div>
@@ -397,14 +396,14 @@ export default function DashboardPage() {
           <div className="card flex flex-col items-center gap-3 p-4">
             <p className="self-start text-sm font-semibold text-zinc-200">Últimos 30 días</p>
             <ProgressRing value={frequencyProgress / 100}>
-              <span className="text-2xl font-extrabold text-zinc-100 leading-none">{workoutDaysLast30}</span>
+              <span className="font-display text-3xl text-zinc-100 leading-none">{workoutDaysLast30}</span>
               <span className="mt-1 text-[11px] text-zinc-500">de {Math.round(targetDaysLast30)} días</span>
             </ProgressRing>
           </div>
           <div className="card flex flex-col items-center gap-3 p-4">
             <p className="self-start text-sm font-semibold text-zinc-200">Media semanal</p>
             <ProgressRing value={Math.min(1, weeklyAverage / weeklyTarget)}>
-              <span className="text-2xl font-extrabold text-zinc-100 leading-none">{weeklyAverage.toFixed(1)}</span>
+              <span className="font-display text-3xl text-zinc-100 leading-none">{weeklyAverage.toFixed(1)}</span>
               <span className="mt-1 text-[11px] text-zinc-500">objetivo {weeklyTarget}</span>
             </ProgressRing>
           </div>
@@ -998,46 +997,6 @@ function AgeChip({ days, label }: { days: number | null; label?: string }) {
   );
 }
 
-function WeekStrip({ today, trainedDates }: { today: Date; trainedDates: Set<string> }) {
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(monday);
-    day.setDate(monday.getDate() + i);
-    return day;
-  });
-  const todayKey = toDateKey(today);
-  const monthName = today.toLocaleDateString("es", { month: "long" });
-  const month = `${monthName.charAt(0).toUpperCase()}${monthName.slice(1)} ${today.getFullYear()}`;
-
-  return (
-    <div className="mt-6">
-      <p className="mb-3 text-center text-sm font-semibold text-white/90">{month}</p>
-      <div className="grid grid-cols-7 gap-1.5">
-        {days.map((day) => {
-          const key = toDateKey(day);
-          const trained = trainedDates.has(key);
-          const isToday = key === todayKey;
-          return (
-            <div
-              key={key}
-              className={`flex flex-col items-center gap-1 rounded-full py-2.5 ${
-                trained ? "bg-white text-accent" : "bg-white/15 text-white"
-              } ${isToday ? "ring-2 ring-white ring-offset-2 ring-offset-accent" : ""}`}
-              aria-label={`${day.toLocaleDateString("es", { weekday: "long", day: "numeric" })}${trained ? ", entrenado" : ""}`}
-            >
-              <span className="text-[11px] font-medium opacity-80">
-                {day.toLocaleDateString("es", { weekday: "narrow" })}
-              </span>
-              <span className="text-base font-bold leading-none">{day.getDate()}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function formatDaysAgoEs(days: number | null) {
   if (days === null) return "nunca";
   if (days === 0) return "hoy";
@@ -1084,7 +1043,7 @@ function GymAtlasLogo() {
           x="16"
           y="21.4"
           textAnchor="middle"
-          fontFamily="Plus Jakarta Sans, system-ui, sans-serif"
+          fontFamily="Archivo, system-ui, sans-serif"
           fontSize="17"
           fontWeight="800"
           fill="currentColor"
