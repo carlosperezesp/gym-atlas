@@ -20,6 +20,22 @@ type ExerciseBlock = {
 const emptySet = (): SetEntry => ({ weight_kg: "", reps: "", rpe: "", notes: "" });
 const emptyBlock = (): ExerciseBlock => ({ exercise_id: "", sets: [emptySet()] });
 
+// Latest set by session date, then by save time; ties keep insertion order,
+// which is the order sets were entered within one save.
+function getLastLoggedSet(): { set: LocalSet; date: string } | null {
+  const data = loadData();
+  const dateByWorkout = new Map(data.workouts.map((w) => [w.id, w.date]));
+  let best: { set: LocalSet; date: string } | null = null;
+  for (const set of data.sets) {
+    const date = dateByWorkout.get(set.workout_id);
+    if (!date) continue;
+    if (!best || date > best.date || (date === best.date && set.created_at >= best.set.created_at)) {
+      best = { set, date };
+    }
+  }
+  return best;
+}
+
 export default function LogPage() {
   const router = useRouter();
 
@@ -31,6 +47,7 @@ export default function LogPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [expandedRpe, setExpandedRpe] = useState<Record<string, boolean>>({});
+  const [prefilledFrom, setPrefilledFrom] = useState<string | null>(null);
   const [exportStartDate, setExportStartDate] = useState(() => {
     const today = new Date();
     const prev = new Date(today);
@@ -49,15 +66,34 @@ export default function LogPage() {
   useEffect(() => { loadExercises(); }, [loadExercises]);
 
   // The dashboard's "Registrar" button opens this page with the planned set
-  // already filled in, so logging between sets is one tap plus corrections.
+  // already filled in. Opened from the nav instead, it repeats the last set
+  // logged, so the next set of a ramp is just a couple of edited numbers.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const exerciseId = params.get("exercise");
-    if (!exerciseId) return;
+    if (exerciseId) {
+      setBlocks([
+        {
+          exercise_id: exerciseId,
+          sets: [{ ...emptySet(), weight_kg: params.get("weight") ?? "", reps: params.get("reps") ?? "" }],
+        },
+      ]);
+      return;
+    }
+
+    const lastSet = getLastLoggedSet();
+    if (!lastSet) return;
+    setPrefilledFrom(lastSet.date);
     setBlocks([
       {
-        exercise_id: exerciseId,
-        sets: [{ ...emptySet(), weight_kg: params.get("weight") ?? "", reps: params.get("reps") ?? "" }],
+        exercise_id: lastSet.set.exercise_id,
+        sets: [
+          {
+            ...emptySet(),
+            weight_kg: lastSet.set.weight_kg === null ? "" : String(lastSet.set.weight_kg),
+            reps: String(lastSet.set.reps),
+          },
+        ],
       },
     ]);
   }, []);
@@ -347,6 +383,16 @@ export default function LogPage() {
                 </button>
               )}
             </div>
+
+            {bi === 0 && prefilledFrom && (
+              <p className="text-xs text-zinc-500">
+                Copiado de tu última serie
+                {prefilledFrom === toDateKey(new Date())
+                  ? " de hoy"
+                  : ` (${new Date(`${prefilledFrom}T12:00:00`).toLocaleDateString("es", { day: "numeric", month: "short" })})`}
+                . Cambia los números y guarda.
+              </p>
+            )}
 
             {ex?.is_bodyweight && (
               <p className="text-xs text-zinc-500 bg-zinc-800/50 rounded-lg px-3 py-2">
