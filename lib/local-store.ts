@@ -55,6 +55,8 @@ export type LocalSettings = {
   athlete_profile: string;
   // Leg days lead with glutes and keep hamstring-dominant work to one exercise.
   glute_priority: boolean;
+  // Leg and full-body days include one balance exercise (BOSU and similar).
+  balance_work: boolean;
 };
 
 export type CoachPlanExercise = {
@@ -102,6 +104,7 @@ const DEFAULT_SETTINGS: LocalSettings = {
   weekly_workout_target: 3,
   athlete_profile: "",
   glute_priority: false,
+  balance_work: false,
 };
 
 const DEFAULT_EXERCISES: LocalExercise[] = [

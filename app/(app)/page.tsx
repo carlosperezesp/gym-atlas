@@ -545,6 +545,18 @@ const PATTERN_TARGETS: Record<WorkoutMode, string[]> = {
 // exercise where the hamstring curl and calves used to go.
 const GLUTE_PRIORITY_PIERNA = ["glute accessory", "knee dominant", "hip hinge", "glute accessory"];
 
+type SelectionOptions = { glutePriority: boolean; balanceWork: boolean };
+
+// Balance work opens the session, while the legs are fresh. Leg days get it
+// as an extra; full-body days drop the core slot so they stay at five.
+function getPatternTargets(mode: WorkoutMode, { glutePriority, balanceWork }: SelectionOptions) {
+  const base = glutePriority && mode === "Pierna" ? GLUTE_PRIORITY_PIERNA : PATTERN_TARGETS[mode];
+  if (!balanceWork) return base;
+  if (mode === "Pierna") return ["balance", ...base];
+  if (mode === "Full Body") return ["balance", ...base.filter((pattern) => pattern !== "core")];
+  return base;
+}
+
 const ACCESSORY_MUSCLES = new Set<MuscleGroup>([
   "abs",
   "calves",
@@ -600,7 +612,8 @@ function getWorkoutRecommendations({
     const staleMuscles = modeMuscles.slice(0, mode === "Full Body" ? 5 : 3);
     const { score, rankScore } = getWorkoutModeScore(mode, byMuscle);
 
-    const glutePriority = data.settings.glute_priority;
+    const glutePriority = Boolean(data.settings.glute_priority);
+    const balanceWork = Boolean(data.settings.balance_work);
     const exercises = data.exercises
       .map((exercise) =>
         scoreExerciseForWorkout({
@@ -623,7 +636,7 @@ function getWorkoutRecommendations({
     return {
       mode,
       muscles: staleMuscles,
-      exercises: selectBalancedExercises(mode, exercises, glutePriority),
+      exercises: selectBalancedExercises(mode, exercises, { glutePriority, balanceWork }),
       score,
       rankScore,
       badgeClass:
@@ -718,17 +731,18 @@ function scoreExerciseForWorkout({
   };
 }
 
-function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[], glutePriority: boolean) {
+function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[], options: SelectionOptions) {
+  const { glutePriority } = options;
+  const patterns = getPatternTargets(mode, options);
   // Real sessions run about four exercises; a longer list just goes unfinished.
-  const limit = mode === "Full Body" ? 5 : 4;
+  // A balance opener on leg day is short, so it doesn't take a main slot.
+  const limit = (mode === "Full Body" ? 5 : 4) + (mode === "Pierna" && patterns[0] === "balance" ? 1 : 0);
   const selected: ExerciseRecommendation[] = [];
   const isHamstringLed = (item: ExerciseRecommendation) => item.primaryMuscle === "hamstrings";
   // Glute priority caps hamstring-dominant work (RDL, leg curl…) at one per session.
   const canAdd = (item: ExerciseRecommendation) =>
     !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id) &&
     !(glutePriority && isHamstringLed(item) && selected.some(isHamstringLed));
-  const patterns = glutePriority && mode === "Pierna" ? GLUTE_PRIORITY_PIERNA : PATTERN_TARGETS[mode];
-
   for (const pattern of patterns) {
     const pick = ranked.find((item) => matchesWorkoutPattern(mode, item.pattern, pattern) && canAdd(item));
     if (pick) selected.push(pick);
@@ -855,6 +869,7 @@ function getExercisePattern(
   const category = (exercise.category ?? "").toLowerCase();
   const muscles = entries.map((entry) => entry.muscle);
 
+  if (["bosu", "balance", "equilibrio", "fitball", "inestab"].some((word) => name.includes(word))) return "balance";
   if (name.includes("curl") && muscles.includes("hamstrings")) return "hamstring curl";
   if (name.includes("calf")) return "calves";
   if (name.includes("abductor") || name.includes("hip thrust") || name.includes("glute")) return "glute accessory";
@@ -1075,6 +1090,9 @@ function buildCoachContext({
   if (data.settings.glute_priority) {
     lines.push("La app prioriza glúteo en pierna y limita a un ejercicio dominante de isquio por sesión.");
   }
+  if (data.settings.balance_work) {
+    lines.push("La app incluye un ejercicio de equilibrio (BOSU o similar) en pierna y full body.");
+  }
 
   lines.push("", `Plan de hoy (${mode ?? "sin plan"}${coachAdjusted ? ", ya ajustado por ti" : ", recomendado por la app"}):`);
   for (const { recommendation, doneSets, coveredBy } of sessionItems) {
@@ -1136,6 +1154,7 @@ function isAccessoryPattern(pattern: string) {
     "core",
     "hamstring curl",
     "glute accessory",
+    "balance",
   ].includes(pattern);
 }
 

@@ -16,6 +16,7 @@ export default function SettingsPage() {
   const [weeklyTarget, setWeeklyTarget] = useState("3");
   const [athleteProfile, setAthleteProfile] = useState("");
   const [glutePriority, setGlutePriority] = useState(false);
+  const [balanceWork, setBalanceWork] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -31,6 +32,7 @@ export default function SettingsPage() {
     setWeeklyTarget(data.settings.weekly_workout_target?.toString() ?? "3");
     setAthleteProfile(data.settings.athlete_profile ?? "");
     setGlutePriority(Boolean(data.settings.glute_priority));
+    setBalanceWork(Boolean(data.settings.balance_work));
     setLoading(false);
   }, []);
 
@@ -53,6 +55,7 @@ export default function SettingsPage() {
         weekly_workout_target: parseInt(weeklyTarget) || 3,
         athlete_profile: athleteProfile.trim(),
         glute_priority: glutePriority,
+        balance_work: balanceWork,
       },
     });
 
@@ -74,6 +77,7 @@ export default function SettingsPage() {
     setWeeklyTarget(fresh.settings.weekly_workout_target.toString());
     setAthleteProfile(fresh.settings.athlete_profile);
     setGlutePriority(fresh.settings.glute_priority);
+    setBalanceWork(fresh.settings.balance_work);
     setSuccess(true);
     router.refresh();
   }
@@ -148,6 +152,21 @@ export default function SettingsPage() {
             <span className="block text-xs text-zinc-500">
               El día de pierna empieza por glúteo, mete un segundo ejercicio de glúteo y limita a uno los ejercicios
               dominantes de isquio (peso muerto rumano, curl femoral…).
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 accent-[#1f5eff]"
+            checked={balanceWork}
+            onChange={(e) => setBalanceWork(e.target.checked)}
+          />
+          <span>
+            <span className="block text-sm font-600">Equilibrio</span>
+            <span className="block text-xs text-zinc-500">
+              Mete un ejercicio de equilibrio al empezar el día de pierna y en full body. Cuenta como equilibrio
+              cualquier ejercicio con &ldquo;BOSU&rdquo;, &ldquo;equilibrio&rdquo; o &ldquo;balance&rdquo; en el nombre.
             </span>
           </span>
         </label>
