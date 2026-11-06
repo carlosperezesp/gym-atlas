@@ -96,6 +96,7 @@ Open [http://localhost:3000](http://localhost:3000).
 3. Add environment variables:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`: server only, never give it a `NEXT_PUBLIC_` prefix
+   - `ANTHROPIC_API_KEY`: server only, powers the in-app coach
    - `APP_PASSCODE`: the access code for the app. Use 12+ characters. Without it, production stays locked. Changing it signs out every device.
 4. Deploy
 

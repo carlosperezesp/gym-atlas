@@ -53,7 +53,30 @@ export type LocalSettings = {
   weekly_workout_target: number;
 };
 
+export type CoachPlanExercise = {
+  exercise_id: string;
+  note: string;
+  sets: Array<{ weight_kg: number | null; reps: string }>;
+};
+
+export type CoachMessage = {
+  role: "user" | "assistant";
+  text: string;
+  plan?: CoachPlanExercise[] | null;
+  remembered?: string[];
+};
+
+export type CoachState = {
+  // Lasting facts the coach should always know (injuries, preferences, kit).
+  notes: string[];
+  // Today's conversation; a new day starts a fresh one.
+  chat?: { date: string; messages: CoachMessage[] };
+  // A coach-adjusted plan replaces the recommendation for that day only.
+  override?: { date: string; exercises: CoachPlanExercise[] };
+};
+
 export type LocalData = {
+  coach?: CoachState;
   exercises: LocalExercise[];
   exerciseMuscles: LocalExerciseMuscle[];
   workouts: LocalWorkout[];
@@ -184,6 +207,7 @@ export function loadData(): LocalData {
       workouts: parsed.workouts ?? [],
       sets: parsed.sets ?? [],
       settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+      coach: parsed.coach,
       importVersion: parsed.importVersion,
       updatedAt: parsed.updatedAt,
     };
@@ -320,6 +344,7 @@ function normalizeData(data: Partial<LocalData>): LocalData {
     workouts: data.workouts ?? [],
     sets: data.sets ?? [],
     settings: { ...DEFAULT_SETTINGS, ...data.settings },
+    coach: data.coach,
     importVersion: data.importVersion,
     updatedAt: data.updatedAt,
   };

@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { loadData, type LocalData, type LocalExercise, type LocalSet } from "@/lib/local-store";
+import {
+  loadData,
+  saveData,
+  type CoachState,
+  type LocalData,
+  type LocalExercise,
+  type LocalSet,
+} from "@/lib/local-store";
 import {
   calculateE1RM,
   getEffectiveWeight,
@@ -21,6 +28,7 @@ import {
   formatLoad,
   formatPlannedSet,
   getLastSessionReference,
+  getRepRange,
   getTopSetFeedback,
   planExercise,
   type ExercisePlan,
@@ -30,6 +38,7 @@ import {
 } from "@/lib/progression";
 import type { MuscleGroup } from "@/types";
 import { ALL_MUSCLES, MUSCLE_LABELS } from "@/types";
+import CoachPanel from "@/components/coach/CoachPanel";
 import MuscleCard from "@/components/dashboard/MuscleCard";
 import TrendBadge from "@/components/ui/TrendBadge";
 
@@ -192,13 +201,38 @@ export default function DashboardPage() {
   const activeWorkout =
     workoutRecommendations.find((item) => item.mode === (selectedWorkoutMode ?? todayMode ?? autoWorkout?.mode)) ??
     autoWorkout;
-  const sessionItems = activeWorkout
-    ? getSessionItems(activeWorkout, todaySetsByExercise, exerciseInfoMap, muscleContributionMap, historyMaps.exerciseTrainingSetMap)
+  const coachOverride = data.coach?.override?.date === todayKey ? data.coach.override : null;
+  const sessionWorkout =
+    activeWorkout && coachOverride
+      ? applyCoachOverride(activeWorkout, coachOverride, exerciseInfoMap, muscleContributionMap)
+      : activeWorkout;
+  const sessionItems = sessionWorkout
+    ? getSessionItems(sessionWorkout, todaySetsByExercise, exerciseInfoMap, muscleContributionMap, historyMaps.exerciseTrainingSetMap)
     : [];
   const plannedIds = new Set(sessionItems.map((item) => item.recommendation.exercise.id));
   const extraTodayExercises = todayExerciseIds
     .filter((id) => !plannedIds.has(id))
     .map((id) => ({ exercise: exerciseInfoMap[id], sets: todaySetsByExercise[id] }));
+
+  const coachContext = buildCoachContext({
+    data,
+    todayKey,
+    daysSinceHistory,
+    comeback,
+    mode: sessionWorkout?.mode ?? null,
+    coachAdjusted: coachOverride !== null,
+    sessionItems,
+    extraTodayExercises,
+    muscleMap,
+    historyByExercise: historyMaps.exerciseTrainingSetMap,
+  });
+
+  function clearCoachOverride() {
+    const current = loadData();
+    if (!current.coach) return;
+    saveData({ ...current, coach: { ...current.coach, override: undefined } });
+    setData(loadData());
+  }
 
   const exercisesWithSets = data.exercises.filter((e) => (exerciseSetMap[e.id] ?? []).length > 0);
   const exerciseLevels = exercisesWithSets.map((exercise) => {
@@ -293,6 +327,14 @@ export default function DashboardPage() {
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 {comeback.banner}
               </p>
+            )}
+            {coachOverride && (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                <p className="text-sm font-semibold text-blue-800">Plan ajustado por el coach.</p>
+                <button type="button" onClick={clearCoachOverride} className="text-xs font-semibold text-blue-700 underline">
+                  Volver al recomendado
+                </button>
+              </div>
             )}
             <p className="text-sm text-zinc-500">
               {todayExerciseIds.length > 0
@@ -389,6 +431,13 @@ export default function DashboardPage() {
           </div>
         </section>
       )}
+
+      <CoachPanel
+        todayKey={todayKey}
+        context={coachContext}
+        exercisesById={exerciseInfoMap}
+        onDataChange={setData}
+      />
 
       <section>
         <p className="section-label">Frecuencia</p>
@@ -940,6 +989,133 @@ function getSessionItems(
       ),
     };
   });
+}
+
+// A coach-adjusted plan keeps the day's session type but swaps in the
+// coach's exercises and sets, reusing the recommendation's details when the
+// exercise was already planned.
+function applyCoachOverride(
+  base: WorkoutRecommendation,
+  override: NonNullable<CoachState["override"]>,
+  exerciseById: Record<string, LocalExercise>,
+  muscleContributionMap: Record<string, Array<{ muscle: MuscleGroup; contribution: number }>>
+): WorkoutRecommendation {
+  const exercises = override.exercises.flatMap((item): ExerciseRecommendation[] => {
+    const exercise = exerciseById[item.exercise_id];
+    if (!exercise || item.sets.length === 0) return [];
+    const original = base.exercises.find((candidate) => candidate.exercise.id === exercise.id);
+    const entries = muscleContributionMap[exercise.id] ?? [];
+    const primaryMuscle = [...entries].sort((a, b) => b.contribution - a.contribution)[0]?.muscle ?? null;
+    const pattern = original?.pattern ?? getExercisePattern(exercise, entries, primaryMuscle);
+    const sets = item.sets.map((set, index): PlannedSet => ({
+      weightKg: set.weight_kg ?? (exercise.is_bodyweight ? 0 : null),
+      reps: set.reps,
+      kind: index === item.sets.length - 1 ? "top" : "ramp",
+    }));
+    return [
+      {
+        exercise,
+        muscles: original?.muscles ?? entries.map((entry) => entry.muscle),
+        primaryMuscle: original?.primaryMuscle ?? primaryMuscle,
+        daysSinceExercise: original?.daysSinceExercise ?? null,
+        pbDaysSince: original?.pbDaysSince ?? null,
+        trend: original?.trend ?? "none",
+        goal: original?.goal ?? "Balanced",
+        pattern,
+        score: original?.score ?? 0,
+        reason: original?.reason ?? "",
+        plan: {
+          sets,
+          repRange: original?.plan.repRange ?? getRepRange(isAccessoryPattern(pattern)),
+          topWeightKg: sets.at(-1)?.weightKg ?? null,
+          note: item.note || "Ajustado por el coach.",
+        },
+      },
+    ];
+  });
+  return { ...base, exercises };
+}
+
+// Plain-text snapshot of everything the coach needs to adjust today's session.
+function buildCoachContext({
+  data,
+  todayKey,
+  daysSinceHistory,
+  comeback,
+  mode,
+  coachAdjusted,
+  sessionItems,
+  extraTodayExercises,
+  muscleMap,
+  historyByExercise,
+}: {
+  data: LocalData;
+  todayKey: string;
+  daysSinceHistory: number | null;
+  comeback: Comeback;
+  mode: WorkoutMode | null;
+  coachAdjusted: boolean;
+  sessionItems: SessionItem[];
+  extraTodayExercises: Array<{ exercise: LocalExercise; sets: LocalSet[] }>;
+  muscleMap: Record<string, MuscleGroup[]>;
+  historyByExercise: Record<string, HistorySet[]>;
+}) {
+  const lines: string[] = [];
+  lines.push(`Hoy: ${todayKey}.`);
+  lines.push(
+    daysSinceHistory === null
+      ? "No hay entrenos anteriores."
+      : `Último entreno antes de hoy: hace ${daysSinceHistory} días.${comeback ? ` Vuelta tras parón: cargas al ${Math.round(comeback.factor * 100)}%.` : ""}`
+  );
+  lines.push(`Peso corporal: ${data.settings.bodyweight_kg ?? "desconocido"} kg.`);
+
+  lines.push("", `Plan de hoy (${mode ?? "sin plan"}${coachAdjusted ? ", ya ajustado por ti" : ", recomendado por la app"}):`);
+  for (const { recommendation, doneSets, coveredBy } of sessionItems) {
+    const planned = recommendation.plan.sets.map(formatPlannedSet).join(" → ");
+    const done = doneSets.length > 0 ? ` | hecho hoy: ${doneSets.map(formatDoneSet).join(", ")}` : "";
+    const covered = coveredBy ? ` | cubierto con ${coveredBy.name}` : "";
+    lines.push(`- ${recommendation.exercise.name} [${recommendation.exercise.id}]: ${planned} (${recommendation.plan.note})${done}${covered}`);
+  }
+  if (extraTodayExercises.length > 0) {
+    lines.push("Hecho hoy fuera del plan:");
+    for (const { exercise, sets } of extraTodayExercises) {
+      lines.push(`- ${exercise.name} [${exercise.id}]: ${sets.map(formatDoneSet).join(", ")}`);
+    }
+  }
+
+  const notes = data.coach?.notes ?? [];
+  lines.push("", "Notas permanentes:", ...(notes.length > 0 ? notes.map((note) => `- ${note}`) : ["- (ninguna)"]));
+
+  lines.push("", "Catálogo de ejercicios (id | nombre | músculos | última sesión: mejor serie):");
+  for (const exercise of [...data.exercises].sort((a, b) => a.name.localeCompare(b.name))) {
+    const reference = getLastSessionReference(historyByExercise[exercise.id] ?? []);
+    const last = reference
+      ? `${reference.date}: ${reference.weightKg === null || reference.weightKg === 0 ? "BW" : `${formatLoad(reference.weightKg)} kg`}×${reference.reps}`
+      : "nunca";
+    const bodyweight = exercise.is_bodyweight ? ", peso corporal" : "";
+    lines.push(`${exercise.id} | ${exercise.name} | ${(muscleMap[exercise.id] ?? []).join(", ")}${bodyweight} | ${last}`);
+  }
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 42);
+  const cutoffKey = toDateKey(cutoff);
+  const exerciseById = Object.fromEntries(data.exercises.map((e) => [e.id, e]));
+  const workoutDate = Object.fromEntries(data.workouts.map((w) => [w.id, w.date]));
+  const byDay: Record<string, Record<string, string[]>> = {};
+  for (const set of [...data.sets].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    const date = workoutDate[set.workout_id];
+    const exercise = exerciseById[set.exercise_id];
+    if (!date || !exercise || date < cutoffKey || date >= todayKey) continue;
+    ((byDay[date] ??= {})[exercise.name] ??= []).push(formatDoneSet(set));
+  }
+  lines.push("", "Historial de las últimas 6 semanas:");
+  const days = Object.keys(byDay).sort();
+  if (days.length === 0) lines.push("- (sin entrenos)");
+  for (const day of days) {
+    lines.push(`${day}: ${Object.entries(byDay[day]).map(([name, sets]) => `${name} ${sets.join(", ")}`).join("; ")}`);
+  }
+
+  return lines.join("\n");
 }
 
 function isAccessoryPattern(pattern: string) {
