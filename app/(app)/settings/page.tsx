@@ -14,6 +14,8 @@ export default function SettingsPage() {
   const [windowDays, setWindowDays] = useState("60");
   const [topSets, setTopSets] = useState("3");
   const [weeklyTarget, setWeeklyTarget] = useState("3");
+  const [athleteProfile, setAthleteProfile] = useState("");
+  const [glutePriority, setGlutePriority] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -27,6 +29,8 @@ export default function SettingsPage() {
     setWindowDays(data.settings.current_level_window_days?.toString() ?? "60");
     setTopSets(data.settings.current_level_top_sets?.toString() ?? "3");
     setWeeklyTarget(data.settings.weekly_workout_target?.toString() ?? "3");
+    setAthleteProfile(data.settings.athlete_profile ?? "");
+    setGlutePriority(Boolean(data.settings.glute_priority));
     setLoading(false);
   }, []);
 
@@ -47,6 +51,8 @@ export default function SettingsPage() {
         current_level_window_days: parseInt(windowDays) || 60,
         current_level_top_sets: parseInt(topSets) || 3,
         weekly_workout_target: parseInt(weeklyTarget) || 3,
+        athlete_profile: athleteProfile.trim(),
+        glute_priority: glutePriority,
       },
     });
 
@@ -66,6 +72,8 @@ export default function SettingsPage() {
     setWindowDays(fresh.settings.current_level_window_days.toString());
     setTopSets(fresh.settings.current_level_top_sets.toString());
     setWeeklyTarget(fresh.settings.weekly_workout_target.toString());
+    setAthleteProfile(fresh.settings.athlete_profile);
+    setGlutePriority(fresh.settings.glute_priority);
     setSuccess(true);
     router.refresh();
   }
@@ -109,6 +117,40 @@ export default function SettingsPage() {
             Used for bodyweight exercise calculations (pull-ups, dips).
           </p>
         </div>
+      </div>
+
+      {/* Profile */}
+      <div className="card p-4 space-y-4">
+        <p className="section-label">Perfil y lesiones</p>
+        <div>
+          <label className="block text-xs font-600 uppercase tracking-wide text-zinc-400 mb-1.5">
+            Lo que el coach debe saber siempre
+          </label>
+          <textarea
+            className="input min-h-28 resize-y"
+            placeholder="Lesiones, molestias, prioridades…"
+            value={athleteProfile}
+            onChange={(e) => setAthleteProfile(e.target.value)}
+          />
+          <p className="text-xs text-zinc-600 mt-1">
+            Se envía al coach en cada mensaje. Se guarda solo en tus datos, no en el código.
+          </p>
+        </div>
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 accent-[#1f5eff]"
+            checked={glutePriority}
+            onChange={(e) => setGlutePriority(e.target.checked)}
+          />
+          <span>
+            <span className="block text-sm font-600">Prioridad glúteo</span>
+            <span className="block text-xs text-zinc-500">
+              El día de pierna empieza por glúteo, mete un segundo ejercicio de glúteo y limita a uno los ejercicios
+              dominantes de isquio (peso muerto rumano, curl femoral…).
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Frequency */}

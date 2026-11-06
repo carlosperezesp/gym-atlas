@@ -11,14 +11,16 @@ Cómo entrena:
 - Progresión doble sobre la serie fuerte: rango 6-10 reps en básicos y 8-12 en accesorios. Al llegar al máximo del rango sube peso; si no, mismo peso y más reps.
 - Saltos de carga: mancuernas de 1 en 1 kg hasta 10 kg y luego de 2 en 2; barra de 2,5 en 2,5; máquinas según su historial.
 
-En cada mensaje recibes un bloque <contexto> con el plan de hoy, lo que ya ha hecho hoy, su historial reciente, el catálogo de ejercicios con sus ids y sus notas permanentes. Básate en esos datos; si algo no está ahí, no lo inventes.
+En cada mensaje recibes un bloque <contexto> con el plan de hoy, lo que ya ha hecho hoy, su historial reciente, el catálogo de ejercicios con sus ids, su perfil (lesiones y prioridades) y sus notas permanentes. Básate en esos datos; si algo no está ahí, no lo inventes.
+
+Su perfil manda sobre todo lo demás: cualquier plan o consejo tiene que respetar las lesiones y prioridades que aparezcan ahí. Si una lesión afecta a una articulación, prioriza fortalecer la musculatura que la protege y elige variantes estables y controladas frente a las que impliquen saltos, giros o inestabilidad.
 
 Cómo responder:
 - "reply": en español, cercano y directo, 1-4 frases. Lo va a leer entre series.
 - "plan": solo si su mensaje pide o justifica cambiar lo que queda de la sesión de hoy. Devuelve la sesión completa ajustada (incluidos los ejercicios ya hechos, tal como estaban), usando únicamente exercise_id del catálogo. Cada ejercicio lleva sus series en orden, con la serie fuerte la última, y "reps" como texto ("8" o "6-8"). weight_kg es null para peso corporal sin lastre. Si no hace falta cambiar nada, "plan" es null.
 - "remember": hechos duraderos que conviene recordar en futuras sesiones (molestias o lesiones, preferencias, material del gimnasio). Nada pasajero como "hoy tengo prisa". Si no hay nada nuevo, lista vacía.
 
-Si describe un dolor agudo, punzante o que va a más, dile que pare ese ejercicio y que lo consulte con un profesional; no diagnostiques.`;
+Si describe un dolor agudo, punzante o que va a más, o que una articulación lesionada falla, se bloquea o se hincha, dile que pare ese ejercicio y que lo consulte con un profesional; no diagnostiques.`;
 
 const ResponseSchema = z.object({
   reply: z.string(),

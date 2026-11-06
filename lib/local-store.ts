@@ -51,6 +51,10 @@ export type LocalSettings = {
   current_level_window_days: number;
   current_level_top_sets: number;
   weekly_workout_target: number;
+  // Free text the coach always reads: injuries, limitations, priorities.
+  athlete_profile: string;
+  // Leg days lead with glutes and keep hamstring-dominant work to one exercise.
+  glute_priority: boolean;
 };
 
 export type CoachPlanExercise = {
@@ -96,6 +100,8 @@ const DEFAULT_SETTINGS: LocalSettings = {
   current_level_window_days: 60,
   current_level_top_sets: 3,
   weekly_workout_target: 3,
+  athlete_profile: "",
+  glute_priority: false,
 };
 
 const DEFAULT_EXERCISES: LocalExercise[] = [

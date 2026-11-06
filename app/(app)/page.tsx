@@ -541,6 +541,10 @@ const PATTERN_TARGETS: Record<WorkoutMode, string[]> = {
   Push: ["horizontal press", "vertical press", "side delts", "triceps"],
 };
 
+// With glute priority on, leg days open with glute work and fit a second glute
+// exercise where the hamstring curl and calves used to go.
+const GLUTE_PRIORITY_PIERNA = ["glute accessory", "knee dominant", "hip hinge", "glute accessory"];
+
 const ACCESSORY_MUSCLES = new Set<MuscleGroup>([
   "abs",
   "calves",
@@ -596,6 +600,7 @@ function getWorkoutRecommendations({
     const staleMuscles = modeMuscles.slice(0, mode === "Full Body" ? 5 : 3);
     const { score, rankScore } = getWorkoutModeScore(mode, byMuscle);
 
+    const glutePriority = data.settings.glute_priority;
     const exercises = data.exercises
       .map((exercise) =>
         scoreExerciseForWorkout({
@@ -609,6 +614,7 @@ function getWorkoutRecommendations({
           windowDays,
           topN,
           comeback,
+          glutePriority,
         })
       )
       .filter((item): item is ExerciseRecommendation => Boolean(item))
@@ -617,7 +623,7 @@ function getWorkoutRecommendations({
     return {
       mode,
       muscles: staleMuscles,
-      exercises: selectBalancedExercises(mode, exercises),
+      exercises: selectBalancedExercises(mode, exercises, glutePriority),
       score,
       rankScore,
       badgeClass:
@@ -643,6 +649,7 @@ function scoreExerciseForWorkout({
   windowDays,
   topN,
   comeback,
+  glutePriority,
 }: {
   exercise: LocalExercise;
   muscles: Array<{ muscle: MuscleGroup; contribution: number }>;
@@ -654,6 +661,7 @@ function scoreExerciseForWorkout({
   windowDays: number;
   topN: number;
   comeback: Comeback;
+  glutePriority: boolean;
 }): ExerciseRecommendation | null {
   const targetEntries = muscles.filter((entry) => targetMuscles.includes(entry.muscle));
   if (targetEntries.length === 0) return null;
@@ -677,7 +685,9 @@ function scoreExerciseForWorkout({
   const exerciseRestScore = Math.min(daysSinceExercise ?? 45, 90) * 0.15;
   const trendBonus = trend === "flat" ? 12 : trend === "down" ? 8 : 0;
   const recoveryPenalty = getRecoveryPenalty(targetEntries, byMuscle, daysSinceExercise);
-  const score = Math.max(0, primaryScore + secondaryScore + pbScore + exerciseRestScore + trendBonus - recoveryPenalty);
+  const gluteBonus = glutePriority ? 12 * (targetEntries.find((entry) => entry.muscle === "glutes")?.contribution ?? 0) : 0;
+  const rawScore = primaryScore + secondaryScore + pbScore + exerciseRestScore + trendBonus + gluteBonus - recoveryPenalty;
+  const score = Math.max(0, glutePriority && primaryMuscle === "hamstrings" ? rawScore * 0.8 : rawScore);
   const primaryMuscleDays = primaryMuscle ? byMuscle[primaryMuscle]?.daysSince ?? null : null;
   const goal = getExerciseGoal(pb?.daysSince ?? null, trend, primaryMuscleDays, recoveryPenalty);
   const pattern = getExercisePattern(exercise, targetEntries, primaryMuscle);
@@ -708,47 +718,39 @@ function scoreExerciseForWorkout({
   };
 }
 
-function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[]) {
+function selectBalancedExercises(mode: WorkoutMode, ranked: ExerciseRecommendation[], glutePriority: boolean) {
   // Real sessions run about four exercises; a longer list just goes unfinished.
   const limit = mode === "Full Body" ? 5 : 4;
   const selected: ExerciseRecommendation[] = [];
+  const isHamstringLed = (item: ExerciseRecommendation) => item.primaryMuscle === "hamstrings";
+  // Glute priority caps hamstring-dominant work (RDL, leg curl…) at one per session.
+  const canAdd = (item: ExerciseRecommendation) =>
+    !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id) &&
+    !(glutePriority && isHamstringLed(item) && selected.some(isHamstringLed));
+  const patterns = glutePriority && mode === "Pierna" ? GLUTE_PRIORITY_PIERNA : PATTERN_TARGETS[mode];
 
-  for (const pattern of PATTERN_TARGETS[mode]) {
-    const pick = ranked.find(
-      (item) =>
-        matchesWorkoutPattern(mode, item.pattern, pattern) &&
-        !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
-    );
+  for (const pattern of patterns) {
+    const pick = ranked.find((item) => matchesWorkoutPattern(mode, item.pattern, pattern) && canAdd(item));
     if (pick) selected.push(pick);
   }
 
   if (mode === "Full Body" && selected.length < 3) {
     for (const block of Object.values(TRAINING_BLOCKS)) {
-      const pick = ranked.find(
-        (item) =>
-          item.muscles.some((muscle) => block.includes(muscle)) &&
-          !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
-      );
+      const pick = ranked.find((item) => item.muscles.some((muscle) => block.includes(muscle)) && canAdd(item));
       if (pick) selected.push(pick);
     }
   }
 
   if (mode !== "Full Body") {
     for (const muscle of WORKOUT_TARGETS[mode]) {
-      const pick = ranked.find(
-        (item) =>
-          item.muscles.includes(muscle) &&
-          !selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)
-      );
+      const pick = ranked.find((item) => item.muscles.includes(muscle) && canAdd(item));
       if (pick) selected.push(pick);
     }
   }
 
   for (const item of ranked) {
     if (selected.length >= limit) break;
-    if (!selected.some((selectedItem) => selectedItem.exercise.id === item.exercise.id)) {
-      selected.push(item);
-    }
+    if (canAdd(item)) selected.push(item);
   }
 
   return selected.slice(0, limit);
@@ -1068,6 +1070,11 @@ function buildCoachContext({
       : `Último entreno antes de hoy: hace ${daysSinceHistory} días.${comeback ? ` Vuelta tras parón: cargas al ${Math.round(comeback.factor * 100)}%.` : ""}`
   );
   lines.push(`Peso corporal: ${data.settings.bodyweight_kg ?? "desconocido"} kg.`);
+  const profile = data.settings.athlete_profile?.trim();
+  lines.push("", "Perfil del atleta (lesiones y prioridades, respétalo siempre):", profile ? profile : "(sin perfil)");
+  if (data.settings.glute_priority) {
+    lines.push("La app prioriza glúteo en pierna y limita a un ejercicio dominante de isquio por sesión.");
+  }
 
   lines.push("", `Plan de hoy (${mode ?? "sin plan"}${coachAdjusted ? ", ya ajustado por ti" : ", recomendado por la app"}):`);
   for (const { recommendation, doneSets, coveredBy } of sessionItems) {
